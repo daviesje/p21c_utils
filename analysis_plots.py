@@ -387,7 +387,6 @@ def global_integral_plot(lcfiles,fields,outname,names,zmax=20):
     fig.get_layout_engine().set(w_pad=0 / 72, h_pad=0 / 72, hspace=0.0,
                             wspace=0.0)
     
-    first_plot = True
     for j,lcfile in enumerate(lcfiles):
         lc = p21c.LightCone.read(lcfile,safe=False)
         if not hasattr(lc,"global_n_ion"):
@@ -396,9 +395,6 @@ def global_integral_plot(lcfiles,fields,outname,names,zmax=20):
         zmax = float(zmax) if zmax is not None else lc.node_redshifts[-1]
         plot_idx = lc.node_redshifts < zmax
         plot_z = lc.node_redshifts[plot_idx]
-        
-        if first_plot:
-            expected_global = np.zeros((len(fields),plot_z.size))
 
         if lc.flag_options.USE_MINI_HALOS:
             Mmin = lc.global_params['M_MIN_INTEGRAL']
@@ -411,24 +407,27 @@ def global_integral_plot(lcfiles,fields,outname,names,zmax=20):
                 'lnMmin' : np.log(Mmin),
                 'lnMmax' : np.log(Mmax)}
 
+        #only do expected globals for first LC (assume same params)
+        if j==0:
+            expected_global = match_global_function(field,lc,**kwargs_expected)[plot_idx]
+            [ax[0,i].plot(plot_z,expected_global[i,:],'r:',linewidth=5) for i,field in enumerate(fields)]
+
         for i,field in enumerate(fields):
             field_lc = 'global_' + field
             if field_lc.endswith("_box"):
                 field_lc = field_lc[:-4]
 
             f_array = getattr(lc,field_lc)[plot_idx]
-            if first_plot:
-                expected_global[i,:] = match_global_function(field,lc,**kwargs_expected)[plot_idx]
-                ax[0,i].plot(plot_z,expected_global[i,:],'r:',linewidth=5)
+            # for xH_box we want special treatment
             if field == 'xH_box':
                 f_array = 1-f_array
                 if "n_ion" in fields:
                     rhocrit = (lc.cosmo_params.cosmo.critical_density(0)).to('M_sun Mpc-3').value
                     f_array2 = getattr(lc,"global_n_ion")[plot_idx] / rhocrit / lc.cosmo_params.OMb
                     ax[0,i].plot(plot_z,f_array2,color=f'C{j:02d}',linestyle=':')
+
             ax[0,i].plot(plot_z,f_array,color=f'C{j:02d}',label=names[j] if names else None)
             ax[1,i].plot(plot_z,(f_array/expected_global[i,:]),color=f'C{j:02d}')
-        first_plot = False
 
     for i,field in enumerate(fields):
         ax[0,i].set_yscale('log')

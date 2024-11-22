@@ -538,7 +538,7 @@ def get_lc_powerspectra(lc_list,z_list,kind='brightness_temp',kind2=None,subtrac
         
     return k_arr, power_arr, z_ps
 
-def match_global_function(field,lc,**kwargs):
+def match_global_function(fields,lc,**kwargs):
     """
     Gets the expected global average matching a HaloBox field.
     """
@@ -574,64 +574,82 @@ def match_global_function(field,lc,**kwargs):
     else:
         Mlim_Fesc = 0.0
         Mlim_Fesc_MINI = 0.0
-
+        
     rhocrit = (cosmo_params.cosmo.critical_density(0)).to('M_sun Mpc-3').value
     hubble = cosmo_params.cosmo.H(redshifts).to('s-1').value
-
-    if field == 'halo_mass':
-        result = np.vectorize(lib.Fcoll_General)(redshifts,kwargs['lnMmin'],kwargs['lnMmax']) * cosmo_params.OMm * rhocrit
-    elif field == 'halo_stars':
-        result = np.vectorize(lib.Nion_General)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'],ave_mturns,
-                            astro_params.ALPHA_STAR,0,10**astro_params.F_STAR10,1.,Mlim_Fstar,0) \
-                                * cosmo_params.OMb * rhocrit * 10**astro_params.F_STAR10
-    elif field == 'halo_stars_mini':
-        result = np.vectorize(lib.Nion_General_MINI)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'],ave_mturns_mini,ave_mturns,
-                            astro_params.ALPHA_STAR_MINI,0.,10**astro_params.F_STAR7_MINI,1.,Mlim_Fstar_MINI,0.) \
-                            * cosmo_params.OMb * rhocrit * 10**astro_params.F_STAR7_MINI
-    elif field == 'halo_sfr':
-        result = np.vectorize(lib.Nion_General)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'],ave_mturns,
-                            astro_params.ALPHA_STAR,0,10**astro_params.F_STAR10,1.,Mlim_Fstar,0) \
-                                * cosmo_params.OMb * rhocrit * 10**astro_params.F_STAR10 * hubble / astro_params.t_STAR
-    elif field == 'halo_sfr_mini':
-        result = np.vectorize(lib.Nion_General_MINI)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'],ave_mturns_mini,ave_mturns,
-                            astro_params.ALPHA_STAR_MINI,0.,10**astro_params.F_STAR7_MINI,1.,Mlim_Fstar_MINI,0.) \
-                                * cosmo_params.OMb * rhocrit * 10**astro_params.F_STAR7_MINI * hubble / astro_params.t_STAR
-    elif field == 'n_ion':
-        result = np.vectorize(lib.Nion_General)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'],ave_mturns,
-                            astro_params.ALPHA_STAR,astro_params.ALPHA_ESC,10**astro_params.F_STAR10,10**astro_params.F_ESC10,Mlim_Fstar,Mlim_Fesc) \
-                            * cosmo_params.OMb * rhocrit * 10**astro_params.F_STAR10 * p21c.global_params.Pop2_ion * 10**astro_params.F_ESC10
-        if flag_options.USE_MINI_HALOS:
-            result += np.vectorize(lib.Nion_General_MINI)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'],ave_mturns_mini,ave_mturns,
-                            astro_params.ALPHA_STAR_MINI,astro_params.ALPHA_ESC,10**astro_params.F_STAR7_MINI,10**astro_params.F_ESC7_MINI,Mlim_Fstar_MINI,Mlim_Fesc_MINI) \
-                            * cosmo_params.OMb * rhocrit * 10**astro_params.F_STAR7_MINI * 10**astro_params.F_ESC7_MINI * p21c.global_params.Pop3_ion
-    elif field == 'whalo_sfr':
-        result = np.vectorize(lib.Nion_General)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'],ave_mturns,
-                            astro_params.ALPHA_STAR,astro_params.ALPHA_ESC,10**astro_params.F_STAR10,10**astro_params.F_ESC10,Mlim_Fstar,Mlim_Fesc) \
-                            * cosmo_params.OMb * rhocrit * 10**astro_params.F_STAR10 * 10**astro_params.F_ESC10 * hubble / astro_params.t_STAR * p21c.global_params.Pop2_ion
-        if flag_options.USE_MINI_HALOS:
-            result += np.vectorize(lib.Nion_General_MINI)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'],ave_mturns_mini,ave_mturns,
-                            astro_params.ALPHA_STAR_MINI,astro_params.ALPHA_ESC,10**astro_params.F_STAR7_MINI,10**astro_params.F_ESC7_MINI,Mlim_Fstar_MINI,Mlim_Fesc_MINI) \
-                            * cosmo_params.OMb * rhocrit * 10**astro_params.F_STAR7_MINI * 10**astro_params.F_ESC7_MINI * hubble / astro_params.t_STAR * p21c.global_params.Pop3_ion
-            
-    elif field == 'halo_xray':
-        result = np.vectorize(lib.Nion_General)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'],ave_mturns,
-                            astro_params.ALPHA_STAR,0,10**astro_params.F_STAR10,1.,Mlim_Fstar,0)  \
-                            * cosmo_params.OMb * rhocrit * 10**astro_params.F_STAR10 * 10**astro_params.L_X * hubble / astro_params.t_STAR * 1e-38 * s_per_yr
-        if flag_options.USE_MINI_HALOS:
-            result += np.vectorize(lib.Nion_General_MINI)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'],ave_mturns_mini,ave_mturns,
-                            astro_params.ALPHA_STAR_MINI,0.,10**astro_params.F_STAR7_MINI,1.,Mlim_Fstar_MINI,0.) \
-                            * cosmo_params.OMb * rhocrit * 10**astro_params.F_STAR7_MINI * 10**astro_params.L_X_MINI * hubble / astro_params.t_STAR * 1e-38 * s_per_yr
-    elif field == 'xH_box':
-        result = np.vectorize(lib.Nion_General)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'],ave_mturns,
-                            astro_params.ALPHA_STAR,astro_params.ALPHA_ESC,10**astro_params.F_STAR10,10**astro_params.F_ESC10,Mlim_Fstar,Mlim_Fesc) \
-                            * 10**astro_params.F_STAR10 * p21c.global_params.Pop2_ion * 10**astro_params.F_ESC10
-        if flag_options.USE_MINI_HALOS:
-            result += np.vectorize(lib.Nion_General_MINI)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'],ave_mturns_mini,ave_mturns,
-                            astro_params.ALPHA_STAR_MINI,astro_params.ALPHA_ESC,10**astro_params.F_STAR7_MINI,10**astro_params.F_ESC7_MINI,Mlim_Fstar_MINI,Mlim_Fesc_MINI) \
-                            * 10**astro_params.F_STAR7_MINI * 10**astro_params.F_ESC7_MINI * p21c.global_params.Pop3_ion
-        result = result
-    else:
-        raise(ValueError("bad field"))
     
-    # print(result)
-    return result
+    need_fesc_acg = field in ("n_ion","F_coll","whalo_sfr","xH_box")
+    need_fesc_mcg = field in ("n_ion","F_coll_MINI","whalo_sfr","xH_box")
+    need_star_acg = field in ("halo_xray","halo_stars","halo_sfr")
+    need_star_mcg = field in ("halo_xray","halo_stars_mini","halo_sfr_mini")
+    need_fcoll = field in ("halo_mass")
+
+    ap_c = astro_params.cdict
+
+    if need_fesc_acg:
+        fesc_acg_integral = np.vectorize(lib.Nion_General)(
+            redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
+            ave_mturns,ap_c["ALPHA_STAR"],ap_c["ALPHA_ESC"],
+            ap_c["F_STAR10"],ap_c["F_ESC10"],Mlim_Fstar,Mlim_Fesc
+        )
+    if need_fesc_mcg:
+        fesc_mcg_integral = np.vectorize(lib.Nion_General_MINI)(
+            redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
+            ave_mturns_mini,ave_mturns,ap_c["ALPHA_STAR_MINI"],ap_c["ALPHA_ESC"],
+            ap_c["F_STAR7_MINI"],ap_c["F_ESC7_MINI"],
+            Mlim_Fstar_MINI,Mlim_Fesc_MINI
+        )
+    if need_fesc_acg:
+        star_acg_integral = np.vectorize(lib.Nion_General)(
+            redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
+            ave_mturns,ap_c["ALPHA_STAR"],0.,
+            ap_c["F_STAR10"],1.,Mlim_Fstar,0.
+        )
+    if need_fesc_mcg:
+        star_mcg_integral = np.vectorize(lib.Nion_General_MINI)(
+            redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
+            ave_mturns_mini,ave_mturns,ap_c["ALPHA_STAR_MINI"],0.,
+            ap_c["F_STAR7_MINI"],0.,
+            Mlim_Fstar_MINI,0.
+        )
+    if need_fcoll:
+        fcoll_integral = np.vectorize(lib.Fcoll_General)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'])
+
+    results = []
+    for field in fields:
+        if field == 'halo_mass':
+            result = fcoll_integral * cosmo_params.OMm * rhocrit
+        elif field == 'halo_stars':
+            result = star_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"]
+        elif field == 'halo_stars_mini':
+            result = star_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"]
+        elif field == 'halo_sfr':
+            result = star_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"] * hubble / ap_c["t_STAR"]
+        elif field == 'halo_sfr_mini':
+            result = star_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * hubble / ap_c["t_STAR"]
+        elif field == 'n_ion':
+            result = fesc_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"] * p21c.global_params.Pop2_ion * ap_c["F_ESC10"]
+            if flag_options.USE_MINI_HALOS:
+                result += fesc_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * p21c.global_params.Pop3_ion
+        elif field == 'whalo_sfr':
+            result = fesc_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["F_ESC10"] * hubble / ap_c["t_STAR"] * p21c.global_params.Pop2_ion
+            if flag_options.USE_MINI_HALOS:
+                result += fesc_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * hubble / ap_c["t_STAR"] * p21c.global_params.Pop3_ion
+        elif field == 'halo_xray':
+            result = star_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["L_X"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
+            if flag_options.USE_MINI_HALOS:
+                result += star_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["L_X_MINI"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
+        elif field == 'xH_box':
+            result = fesc_acg_integral * ap_c["F_STAR10"] * p21c.global_params.Pop2_ion * ap_c["F_ESC10"]
+            if flag_options.USE_MINI_HALOS:
+                result += fesc_mcg_integral * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * p21c.global_params.Pop3_ion
+        elif field == 'Fcoll':
+            result = fesc_acg_integral
+        elif field == 'Fcoll_MINI':
+                result += fesc_mcg_integral
+        else:
+            raise ValueError("bad field")
+
+        results += result
+    
+    return np.array(result)
