@@ -757,7 +757,6 @@ def global_seriesplot(lc_list,kinds,zmax,names,output):
             
     if names:
         axs[0].legend(fontsize=6)
-    fig.tight_layout()
     fig.savefig(output)
 
 def photoncons_plot(lc_list,output):

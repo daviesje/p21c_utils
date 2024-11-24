@@ -550,7 +550,12 @@ def match_global_function(fields,lc,**kwargs):
 
     s_per_yr = 60*60*24 * 365.25
     
-    lib.Broadcast_struct_global_all(user_params(), cosmo_params(), astro_params(), flag_options())
+    lib.Broadcast_struct_global_all(
+        user_params.cstruct,
+        cosmo_params.cstruct,
+        astro_params.cstruct,
+        flag_options.cstruct
+    )
     lib.init_ps()
 
     if user_params.INTEGRATION_METHOD_ATOMIC == 1 or user_params.INTEGRATION_METHOD_MINI == 1:

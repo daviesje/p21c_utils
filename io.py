@@ -2,7 +2,7 @@ import numpy as np
 import py21cmfast as p21c
 from .analysis_funcs import get_binned_stats
 import h5py
-import pandas as pd
+# import pandas as pd
 from astropy import units as U
 
 import logging

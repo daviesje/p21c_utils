@@ -19,13 +19,13 @@ def setup_params_from_title(title,hires=300,lores=100,boxlen=200,nthreads=1,minm
     mini = "_MINI" in title
     
     if "_CONS-z" in title:
-        cons = 1
+        cons = 'z-photoncons'
     elif "_CONS-a" in title:
-        cons = 2
+        cons = 'alpha-photoncons'
     elif "_CONS-f" in title:
-        cons = 3
+        cons = 'f-photoncons'
     else:
-        cons = 0
+        cons = 'no-photoncons'
 
     zeta = not "_OLD" in title #turns off most of the other flags
     median = "_MEDIAN" in title
@@ -34,33 +34,33 @@ def setup_params_from_title(title,hires=300,lores=100,boxlen=200,nthreads=1,minm
     fo = p21c.FlagOptions(HALO_STOCHASTICITY=stoc,USE_HALO_FIELD=hf,USE_MASS_DEPENDENT_ZETA=zeta
                         ,USE_TS_FLUCT=ts,INHOMO_RECO=rec,PHOTON_CONS_TYPE=cons,FIXED_HALO_GRIDS=fix
                         ,USE_EXP_FILTER=exf,USE_LYA_HEATING=True,CELL_RECOMB=cellr,USE_MINI_HALOS=mini
-                        ,USE_CMB_HEATING=True,HALO_SCALING_RELATIONS_MEDIAN=median,USE_UPPER_STELLAR_TURNOVER=not compat)
+                        ,USE_CMB_HEATING=True,USE_UPPER_STELLAR_TURNOVER=not compat
+                        ,HALO_SCALING_RELATIONS_MEDIAN=median
+    )
 
     #user params
     if"_EPS" in title:
-        hmf = 0
+        hmf = "EPS"
     elif "_DELOS" in title:
-        hmf = 4
+        hmf = "DELOS"
     else:
-        hmf = 1
-        
-    minmem = "_MM" in title
+        hmf = "ST"
 
     if "_FF" in title:
-        intm = 2
+        intm = "GAMMA-APPROX"
     elif "_QAG" in title:
-        intm = 0
+        intm = "GSL-QAG"
     else:
-        intm = 1
+        intm = "GAUSS-LEGENDRE"
 
     if "_NUMLIM" in title:
-        sampm = 1
+        sampm = "NUMBER-LIMITED"
     elif "_PARTITION" in title:
-        sampm = 2
+        sampm = 'PARTITION'
     elif "_BINARY" in title:
-        sampm = 3
+        sampm = 'BINARY-SPLIT'
     else:
-        sampm = 0
+        sampm = "MASS-LIMITED"
 
     if minmass is None:
         minmass = 1e10 if '_LARGE' in title else 1e8
@@ -70,26 +70,26 @@ def setup_params_from_title(title,hires=300,lores=100,boxlen=200,nthreads=1,minm
         
     bufferfac = 5 if '_LARGE' in title else 2
     
-    up = p21c.UserParams(USE_INTERPOLATION_TABLES=True,N_THREADS=nthreads,BOX_LEN=boxlen,DIM=hires,POWER_SPECTRUM=5
-                                    ,HII_DIM=lores,HMF=hmf,USE_RELATIVE_VELOCITIES=True,
-                                    MINIMIZE_MEMORY=minmem,INTEGRATION_METHOD_ATOMIC=intm,INTEGRATION_METHOD_MINI=intm,
+    up = p21c.UserParams(USE_INTERPOLATION_TABLES=True,N_THREADS=nthreads,BOX_LEN=boxlen,DIM=hires,POWER_SPECTRUM='CLASS',
+                                    HII_DIM=lores,HMF=hmf,USE_RELATIVE_VELOCITIES=True,
+                                    MINIMIZE_MEMORY=False,INTEGRATION_METHOD_ATOMIC=intm,INTEGRATION_METHOD_MINI=intm,
                                     SAMPLER_MIN_MASS=minmass,MAXHALO_FACTOR=bufferfac,SAMPLE_METHOD=sampm)
 
     #astro params
-    s_star = 0.0 if "_NOSIGMA" in title else None
-    s_sfr = 0.0 if "_NOSIGMA" in title else None
-    s_xray = 0.0 if "_NOSIGMA" in title else None
     lx = 40 if compat else 40.5
-    ap = p21c.AstroParams(SIGMA_STAR=s_star,SIGMA_SFR_LIM=s_sfr,SIGMA_LX=s_xray,L_X=lx)
+    ap = p21c.AstroParams(L_X=lx,flag_options=fo)
     #AP matching SERRA
     if "_SERRA" in title:
-        ap.update(F_STAR10=-0.8,ALPHA_STAR=0.1,SIGMA_STAR=0.25,t_STAR=0.15,
+        ap = ap.clone(F_STAR10=-0.8,ALPHA_STAR=0.1,SIGMA_STAR=0.25,t_STAR=0.15,
                                 F_ESC10=-1.5,ALPHA_ESC=0.0)
     #AP matching ASTRID
     elif "_ASTRID" in title:
-        ap.update(F_STAR10=-2.3,ALPHA_STAR=0.65,SIGMA_STAR=0.3,t_STAR=0.13,
+        ap = ap.clone(F_STAR10=-2.3,ALPHA_STAR=0.65,SIGMA_STAR=0.3,t_STAR=0.13,
                                 F_ESC10=0.0,ALPHA_ESC=0.0)
-    
+    #No lognormal sigmas
+    elif "_NOSIGMA" in title:
+        ap = ap.clone(SIGMA_STAR=0.,SIGMA_SFR_LIM=0.,SIGMA_LX=0.)
+
     #cosmo params
     cp = p21c.CosmoParams()
 
