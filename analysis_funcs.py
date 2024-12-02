@@ -136,8 +136,8 @@ def get_props_from_halofield(halo_field,ap_alter=None,fo_alter=None,sel=None,kin
     props_out = np.zeros(int(12*pt_halos.n_halos)).astype('f4')
     lib.test_halo_props(
             halo_field.redshift,
-            halo_field.user_params(),
-            halo_field.cosmo_params(),
+            halo_field.user_params.cstruct,
+            halo_field.cosmo_params.cstruct,
             ap(),
             fo(),
             zero_array,
@@ -157,7 +157,7 @@ def get_props_from_halofield(halo_field,ap_alter=None,fo_alter=None,sel=None,kin
 
 def get_cell_integrals(redshift,user_params,cosmo_params,astro_params,flag_options,delta):
     #pass info to backend
-    lib.Broadcast_struct_global_all(user_params(), cosmo_params(), astro_params(), flag_options())
+    lib.Broadcast_struct_global_all(user_params.cstruct, cosmo_params.cstruct, astro_params.cstruct, flag_options.cstruct)
     lib.init_ps()
     if user_params.INTEGRATION_METHOD_ATOMIC == 1:
         lib.initialise_GL(100, lnMmin, lnMmax)
@@ -550,7 +550,7 @@ def match_global_function(fields,lc,**kwargs):
 
     s_per_yr = 60*60*24 * 365.25
     
-    lib.Broadcast_struct_global_all(user_params(), cosmo_params(), astro_params(), flag_options())
+    lib.Broadcast_struct_global_all(user_params.cstruct, cosmo_params.cstruct, astro_params.cstruct, flag_options.cstruct)
     lib.init_ps()
 
     if user_params.INTEGRATION_METHOD_ATOMIC == 1 or user_params.INTEGRATION_METHOD_MINI == 1:
@@ -599,13 +599,13 @@ def match_global_function(fields,lc,**kwargs):
             ap_c["F_STAR7_MINI"],ap_c["F_ESC7_MINI"],
             Mlim_Fstar_MINI,Mlim_Fesc_MINI
         )
-    if need_fesc_acg:
+    if need_star_acg:
         star_acg_integral = np.vectorize(lib.Nion_General)(
             redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
             ave_mturns,ap_c["ALPHA_STAR"],0.,
             ap_c["F_STAR10"],1.,Mlim_Fstar,0.
         )
-    if need_fesc_mcg:
+    if need_star_mcg:
         star_mcg_integral = np.vectorize(lib.Nion_General_MINI)(
             redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
             ave_mturns_mini,ave_mturns,ap_c["ALPHA_STAR_MINI"],0.,

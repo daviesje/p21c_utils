@@ -9,7 +9,6 @@ import numpy as np
 import jax.numpy as jnp
 from scipy.integrate import quadrature
 from scipy.ndimage import fourier_gaussian
-import tools21cm as t2c
 from tqdm import tqdm
 from astropy import units as U, constants as c
 from astropy.io import fits

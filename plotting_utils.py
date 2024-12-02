@@ -14,7 +14,7 @@ plt.rcParams["font.size"] = 10
 plt.rcParams["xtick.labelsize"] = 8
 plt.rcParams["ytick.labelsize"] = 8
 plt.rcParams["legend.fontsize"] = 8
-plt.rcParams["text.usetex"] = True
+# plt.rcParams["text.usetex"] = True
 
 #gets the grid closest to the desired aspect ratio
 #TODO: There's a better way if I'm not lazy
@@ -66,10 +66,10 @@ def register_eor_cmaps():
                                                                        (0.1, 'coral'),
                                                                        (0.0, 'wheat')][::-1])
     try:
-        plt.register_cmap(cmap=my_cmap_bt)
+        matplotlib.colormaps.register(cmap=my_cmap_bt)
     except ValueError:
-        cm.unregister_cmap('my_cmap_diff')
-        plt.register_cmap(cmap=my_cmap_bt)
+        matplotlib.colormaps.unregister('my_cmap_diff')
+        matplotlib.colormaps.register(cmap=my_cmap_bt)
     
     EoR_colour = matplotlib.colors.LinearSegmentedColormap.from_list('my_cmap_eor',
                                                                      [(0, 'white'),
@@ -81,10 +81,10 @@ def register_eor_cmaps():
                                                                       (1, 'cyan')])
     
     try:
-        plt.register_cmap(cmap=EoR_colour)
+        matplotlib.colormaps.register(cmap=EoR_colour)
     except ValueError:
-        cm.unregister_cmap('my_cmap_eor')
-        plt.register_cmap(cmap=EoR_colour)
+        matplotlib.colormaps.unregister('my_cmap_eor')
+        matplotlib.colormaps.register(cmap=EoR_colour)
 
     return my_cmap_bt,EoR_colour
 
