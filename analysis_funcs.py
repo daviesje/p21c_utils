@@ -679,6 +679,7 @@ def match_global_function(fields,lc,**kwargs):
     need_star_acg = any(field in ("halo_xray","halo_stars","halo_sfr") for field in fields)
     need_star_mcg = any(field in ("halo_xray","halo_stars_mini","halo_sfr_mini") for field in fields)
     need_fcoll = any(field in ("halo_mass") for field in fields)
+    need_xray = "halo_xray" in fields and lc.flag_options.USE_HALO_FIELD
 
     ap_c = astro_params.cdict
 
@@ -710,6 +711,14 @@ def match_global_function(fields,lc,**kwargs):
         )
     if need_fcoll:
         fcoll_integral = np.vectorize(lib.Fcoll_General)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'])
+    if need_xray:
+        xray_integral = np.vectorize(lib.Xray_General)(
+            redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
+            ave_mturns_mini,ave_mturns,ap_c['ALPHA_STAR'],
+            ap_c['ALPHA_STAR_MINI'],ap_c["F_STAR10"],ap_c["F_STAR7_MINI"],
+            ap_c['L_X'],ap_c['L_X_MINI'],1/hubble,ap_c['t_STAR'],
+            Mlim_Fstar,Mlim_Fstar_MINI,
+        )
 
     results = []
     for field in fields:
@@ -732,9 +741,12 @@ def match_global_function(fields,lc,**kwargs):
             if flag_options.USE_MINI_HALOS:
                 result += fesc_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * hubble / ap_c["t_STAR"] * p21c.global_params.Pop3_ion
         elif field == 'halo_xray':
-            result = star_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["L_X"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
-            if flag_options.USE_MINI_HALOS:
-                result += star_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["L_X_MINI"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
+            if lc.flag_options.USE_HALO_FIELD:
+                result = star_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["L_X"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
+                if flag_options.USE_MINI_HALOS:
+                    result += star_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["L_X_MINI"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
+            else:
+                result = xray_integral * cosmo_params.OMm * rhocrit
         elif field == 'xH_box':
             result = fesc_acg_integral * ap_c["F_STAR10"] * p21c.global_params.Pop2_ion * ap_c["F_ESC10"]
             if flag_options.USE_MINI_HALOS:
