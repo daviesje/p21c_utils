@@ -59,7 +59,7 @@ def get_fake_boxes(inputs,redshift):
 
 #generates HaloField, PerturbHaloField, and HaloBox at a desired redshift
 #  without reionisation / feedback
-def get_halo_fields(redshift,inputs,init_box,ptb):
+def get_halo_fields(redshift,inputs,init_box,ptb,lagrangian=False):
     halos_desc = None
     halo_field = None
     pt_halos = None
@@ -77,14 +77,35 @@ def get_halo_fields(redshift,inputs,init_box,ptb):
             )
             halos_desc = halo_field
         
-        pt_halos = p21c.perturb_halo_list(
-            redshift=redshift,
-            inputs=inputs,
-            initial_conditions=init_box,
-            halo_field=halo_field,
-            regenerate=True,
-            write=False
-        )
+        n_halos = halo_field.n_halos
+        if lagrangian:
+            dim_fac = halo_field.user_params.HII_DIM / halo_field.user_params.DIM
+            pt_halos = p21c.PerturbHaloField(
+                redshift=z,
+                inputs=inputs,
+                buffer_size=n_halos,
+            )
+            pt_halos()
+            pt_halos.n_halos = n_halos
+            setattr(pt_halos.cstruct,'n_halos',n_halos)
+            pt_halos.halo_masses[...] = halo_field.halo_masses[:n_halos]
+            pt_halos.halo_coords[...] = (halo_field.halo_coords[:n_halos,:]*dim_fac).astype('i4')
+            pt_halos.star_rng[...] = halo_field.star_rng[:n_halos]
+            pt_halos.sfr_rng[...] = halo_field.sfr_rng[:n_halos]
+            pt_halos.xray_rng[...] = halo_field.xray_rng[:n_halos]
+            # HACK: Since we don't compute, we have to mark the struct as computed
+            for k, state in pt_halos._array_state.items():
+                if state.initialized:
+                    state.computed_in_mem = True
+        else:
+            pt_halos = p21c.perturb_halo_list(
+                redshift=redshift,
+                inputs=inputs,
+                initial_conditions=init_box,
+                halo_field=halo_field,
+                regenerate=True,
+                write=False
+            )
 
     fpth,fts,fion = get_fake_boxes(redshift=redshift,inputs=inputs)
     hbox = p21c.compute_halo_grid(
