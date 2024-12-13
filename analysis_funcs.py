@@ -674,11 +674,11 @@ def match_global_function(fields,lc,**kwargs):
     rhocrit = (cosmo_params.cosmo.critical_density(0)).to('M_sun Mpc-3').value
     hubble = cosmo_params.cosmo.H(redshifts).to('s-1').value
     
-    need_fesc_acg = field in ("n_ion","F_coll","whalo_sfr","xH_box")
-    need_fesc_mcg = field in ("n_ion","F_coll_MINI","whalo_sfr","xH_box")
-    need_star_acg = field in ("halo_xray","halo_stars","halo_sfr")
-    need_star_mcg = field in ("halo_xray","halo_stars_mini","halo_sfr_mini")
-    need_fcoll = field in ("halo_mass")
+    need_fesc_acg = any(field in ("n_ion","F_coll","whalo_sfr","xH_box") for field in fields)
+    need_fesc_mcg = any(field in ("n_ion","F_coll_MINI","whalo_sfr","xH_box") for field in fields)
+    need_star_acg = any(field in ("halo_xray","halo_stars","halo_sfr") for field in fields)
+    need_star_mcg = any(field in ("halo_xray","halo_stars_mini","halo_sfr_mini") for field in fields)
+    need_fcoll = any(field in ("halo_mass") for field in fields)
 
     ap_c = astro_params.cdict
 
@@ -746,6 +746,6 @@ def match_global_function(fields,lc,**kwargs):
         else:
             raise ValueError("bad field")
 
-        results += result
+        results += [result]
     
-    return np.array(result)
+    return np.array(results)
