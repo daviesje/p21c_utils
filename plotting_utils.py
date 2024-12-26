@@ -14,7 +14,7 @@ plt.rcParams["font.size"] = 10
 plt.rcParams["xtick.labelsize"] = 8
 plt.rcParams["ytick.labelsize"] = 8
 plt.rcParams["legend.fontsize"] = 8
-plt.rcParams["text.usetex"] = True
+# plt.rcParams["text.usetex"] = True
 
 #gets the grid closest to the desired aspect ratio
 #TODO: There's a better way if I'm not lazy
@@ -106,7 +106,7 @@ plot_specs = {
     "n_ion" : {
         "cmap" : 'Reds',
         "vmin" : 1e-3,
-        "vmax" : 1e1,
+        "vmax" : 1e2,
         # "vmin" : 1e7,
         # "vmax" : 1e12,
         "lognorm" : True,
@@ -128,8 +128,8 @@ plot_specs = {
     },
     "halo_sfr" : {
         "cmap" : 'Blues',
-        "vmin" : 1e-12,
-        "vmax" : 1e-7,
+        "vmin" : 1e-13,
+        "vmax" : 1e-6,
         "lognorm" : True,
         "clabel" : r'SFRD $(M_\odot s^{-1} cMpc^{-3})$',
     },
@@ -212,10 +212,17 @@ plot_specs = {
     },
     "halo_xray" : {
         "cmap" : 'magma',
-        "vmin" : 1e-2,
-        "vmax" : 1e3,
+        "vmin" : 1e-3,
+        "vmax" : 1e4,
         "lognorm" : True,
         "clabel" : r'$L_X (10^{38} \mathrm{erg \, s}^{-1} \, \mathrm{Mpc}^{-3})$'
+    },
+    "lx/sfr" : {
+        "cmap" : 'magma',
+        "vmin" : 5e1,
+        "vmax" : 1e3,
+        "lognorm" : True,
+        "clabel" : r'$L_X/SFR (10^{38} \mathrm{erg \, s}^{-1} M_\odot^-1 yr, \mathrm{Mpc}^{-3})$'
     }
 }
 

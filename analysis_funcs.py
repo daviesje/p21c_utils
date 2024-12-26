@@ -13,11 +13,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 #Generates fake ionized, spintemp and perturbed halo fields for getting fields w/o feedback
-def get_fake_boxes(kw_dict,random_seed):
+def get_fake_boxes(inputs,redshift):
     #fake ion field
     fake_ion = p21c.IonizedBox(
-            **kw_dict,
-            random_seed=random_seed
+        redshift=redshift,
+        inputs=inputs,
     )
     fake_ion() #allocate memory
     fake_ion.z_re_box[...] = -1.
@@ -30,22 +30,22 @@ def get_fake_boxes(kw_dict,random_seed):
 
     #fake ts field
     fake_ts = p21c.TsBox(
-            **kw_dict,
-            random_seed=random_seed
+        redshift=redshift,
+        inputs=inputs,
     )
     fake_ts() #allocate memory
     fake_ts.J_21_LW_box[...] = 0.
     fake_ts() #pass to C
     
     for k, state in fake_ts._array_state.items():
-            if state.initialized:
-                    state.computed_in_mem = True
+        if state.initialized:
+            state.computed_in_mem = True
     
     #fake pt halos for subsampler box
     fake_pth = p21c.PerturbHaloField(
-            **kw_dict,
-            random_seed=random_seed,
-            buffer_size=0,
+        redshift=redshift,
+        inputs=inputs,
+        buffer_size=0,
     )
     fake_pth() #allocate memory
     fake_pth.n_halos = int(0)
@@ -59,105 +59,133 @@ def get_fake_boxes(kw_dict,random_seed):
 
 #generates HaloField, PerturbHaloField, and HaloBox at a desired redshift
 #  without reionisation / feedback
-def get_halo_fields(zstart,zstop,zstep,random_seed,cp,up,ap,fo,init_box,ptb):
-    z = zstop
-    zst = z if zstart is None else zstart
-    while z > zst:
-        z = (1+z)/zstep - 1
-    
+def get_halo_fields(redshift,inputs,init_box,ptb,lagrangian=False):
     halos_desc = None
-    while z <= zstop:
-        kw = {
-            "redshift": z,
-            "cosmo_params" : cp,
-            "user_params" : up,
-            "astro_params" : ap,
-            "flag_options" : fo,
-        }
-        halo_field = p21c.determine_halo_list(
-            **kw,
-            init_boxes=init_box,
-            regenerate=True,
-            halos_desc=halos_desc,
-            random_seed=random_seed,
-        )
-        logger.info(f'z = {z} zi = {zst} zf = {zstop}')
-        halos_desc = halo_field
-        z = (1+z)*p21c.global_params.ZPRIME_STEP_FACTOR - 1
-    
-    z = (1+z)/p21c.global_params.ZPRIME_STEP_FACTOR - 1
-    pt_halos = p21c.perturb_halo_list(
-        **kw,
-        init_boxes=init_box,
-        halo_field=halo_field,
-        regenerate=True,
-    )
-    fts,fion,fpth = get_fake_boxes(**kw)
-    hbox_ss = p21c.make_halo_box(
-        **kw,
-        init_boxes=init_box,
-        regenerate=True,
-        pt_halos=fpth,
+    halo_field = None
+    pt_halos = None
+    z_array = np.append(inputs.node_redshifts[inputs.node_redshifts < redshift],redshift)
+    logger.info(f'getting halos at {z_array}')
+    if not inputs.flag_options.FIXED_HALO_GRIDS:
+        for z in z_array:
+            halo_field = p21c.determine_halo_list(
+                redshift=z,
+                inputs=inputs,
+                initial_conditions=init_box,
+                regenerate=True,
+                halos_desc=halos_desc,
+                write=False,
+            )
+            halos_desc = halo_field
+        
+        n_halos = halo_field.n_halos
+        if lagrangian:
+            dim_fac = halo_field.user_params.HII_DIM / halo_field.user_params.DIM
+            pt_halos = p21c.PerturbHaloField(
+                redshift=z,
+                inputs=inputs,
+                buffer_size=n_halos,
+            )
+            pt_halos()
+            pt_halos.n_halos = n_halos
+            setattr(pt_halos.cstruct,'n_halos',n_halos)
+            pt_halos.halo_masses[...] = halo_field.halo_masses[:n_halos]
+            pt_halos.halo_coords[...] = (halo_field.halo_coords[:n_halos,:]*dim_fac).astype('i4')
+            pt_halos.star_rng[...] = halo_field.star_rng[:n_halos]
+            pt_halos.sfr_rng[...] = halo_field.sfr_rng[:n_halos]
+            pt_halos.xray_rng[...] = halo_field.xray_rng[:n_halos]
+            # HACK: Since we don't compute, we have to mark the struct as computed
+            for k, state in pt_halos._array_state.items():
+                if state.initialized:
+                    state.computed_in_mem = True
+        else:
+            pt_halos = p21c.perturb_halo_list(
+                redshift=redshift,
+                inputs=inputs,
+                initial_conditions=init_box,
+                halo_field=halo_field,
+                regenerate=True,
+                write=False
+            )
+
+    fpth,fts,fion = get_fake_boxes(redshift=redshift,inputs=inputs)
+    hbox = p21c.compute_halo_grid(
+        initial_conditions=init_box,
+        inputs=inputs,
+        perturbed_halo_list=pt_halos,
         perturbed_field=ptb,
         previous_spin_temp=fts,
         previous_ionize_box=fion,
+        write=False,
+        regenerate=True,
     )
-    return halo_field,pt_halos,hbox_ss
+    hbox_ss = p21c.compute_halo_grid(
+        inputs=inputs,
+        initial_conditions=init_box,
+        perturbed_halo_list=fpth,
+        perturbed_field=ptb,
+        previous_spin_temp=fts,
+        previous_ionize_box=fion,
+        write=False,
+        regenerate=True,
+    )
+    return halo_field,pt_halos,hbox,hbox_ss
 
 #gets properties from either HaloField or PerturbHaloField
 #ignoring feedback and with possible alterations to parameters
-def get_props_from_halofield(halo_field,ap_alter=None,fo_alter=None,sel=None,kinds=['sfr',]):
+def get_props_from_halofield(halo_field,inputs_override,sel=None,kinds=['sfr',]):
     #fake pt_halos
-    zero_array = ffi.cast("float *", np.zeros(1).ctypes.data)
+    zero_array = ffi.cast("float *", np.zeros(halo_field.user_params.HII_DIM**3,dtype='f4').ctypes.data)
 
     if sel is None:
         sel = slice(0,halo_field.n_halos+1)
     n_halos = halo_field.halo_masses[sel].size
 
     pt_halos = p21c.PerturbHaloField(
-                    redshift=halo_field.redshift,
-                    user_params=halo_field.user_params,
-                    cosmo_params=halo_field.cosmo_params,
-                    astro_params=halo_field.astro_params,
-                    flag_options=halo_field.flag_options,
-                    buffer_size=n_halos
-            )
+        inputs=inputs_override,
+        buffer_size=n_halos
+    )
     pt_halos()
     pt_halos.n_halos = n_halos
+    setattr(pt_halos.cstruct,'n_halos',n_halos)
     pt_halos.halo_masses[...] = halo_field.halo_masses[sel]
     pt_halos.star_rng[...] = halo_field.star_rng[sel]
     pt_halos.sfr_rng[...] = halo_field.sfr_rng[sel]
     pt_halos.xray_rng[...] = halo_field.xray_rng[sel]
 
-    ap = halo_field.astro_params if ap_alter is None else ap_alter
-    fo = halo_field.flag_options if fo_alter is None else fo_alter
+    print(pt_halos,flush=True)
 
     #get props w/o feedback
     props_out = np.zeros(int(12*pt_halos.n_halos)).astype('f4')
     lib.test_halo_props(
-            halo_field.redshift,
-            halo_field.user_params(),
-            halo_field.cosmo_params(),
-            ap(),
-            fo(),
-            zero_array,
-            zero_array,
-            zero_array,
-            zero_array,
-            pt_halos(),
-            ffi.cast("float *", props_out.ctypes.data),
+        halo_field.redshift,
+        inputs_override.user_params.cstruct,
+        inputs_override.cosmo_params.cstruct,
+        inputs_override.astro_params.cstruct,
+        inputs_override.flag_options.cstruct,
+        zero_array,
+        zero_array,
+        zero_array,
+        zero_array,
+        pt_halos(),
+        ffi.cast("float *", props_out.ctypes.data),
     )
 
     props_out = props_out.reshape((pt_halos.n_halos,12))
+    
+    sel = np.any(~np.isfinite(props_out),axis=-1)
+    if sel.sum() > 0:
+            print(f'{sel.sum()} invalid halos')
+            print(f'First 10: {props_out[sel,:][:10,:]}')
+
     index_map = {'mass' : 0, 'star' : 1, 'sfr' : 2, 'xray' : 3, 'nion' : 4, 'wsfr' : 5,
                  'star_mini' : 6, 'sfr_mini' : 7, 'mturn_a' : 8, 
                  'mturn_m' : 9, 'mturn_r' : 10, 'metallicity' : 11}
     
-    return [props_out[:,index_map[kind]] for kind in kinds]
+    return {kind:props_out[:,index_map[kind]] for kind in kinds}
 
 def get_cell_integrals(redshift,user_params,cosmo_params,astro_params,flag_options,delta):
     #pass info to backend
-    lib.Broadcast_struct_global_all(user_params(), cosmo_params(), astro_params(), flag_options())
+    lib.Broadcast_struct_global_all(user_params.cstruct, cosmo_params.cstruct, astro_params.cstruct, flag_options.cstruct)
     lib.init_ps()
     if user_params.INTEGRATION_METHOD_ATOMIC == 1:
         lib.initialise_GL(100, lnMmin, lnMmax)
@@ -171,7 +199,12 @@ def get_cell_integrals(redshift,user_params,cosmo_params,astro_params,flag_optio
     sigma_cell = lib.sigma_z0(cell_mass.value)
     Mlim_Fstar = 1e10 * (10**astro_params.F_STAR10) ** (-1.0 / astro_params.ALPHA_STAR)
     Mlim_Fesc = 1e10 * (10**astro_params.F_ESC10) ** (-1.0 / astro_params.ALPHA_ESC)
+
+    Mturn_acg = lib.atomic_cooling_threshold(redshift) if flag_options.USE_MINI_HALOS else 10**astro_params.M_TURN
+    Mturn_mcg = 10**astro_params.M_TURN
+
     
+    #NOTE: Minihalo integrals assume no feedback
     m_integral = lib.Mcoll_Conditional(
             growth,
             lnMmin,
@@ -180,15 +213,15 @@ def get_cell_integrals(redshift,user_params,cosmo_params,astro_params,flag_optio
             sigma_cell,
             delta,
             0,
-        )
-    integral_starsonly = lib.Nion_ConditionalM(
+    )
+    integral_stars = lib.Nion_ConditionalM(
         growth,
         lnMmin,
         lnMmax,
         cell_mass.value,
         sigma_cell,
         delta,
-        10**astro_params.M_TURN,
+        Mturn_acg,
         astro_params.ALPHA_STAR,
         0.,
         10**astro_params.F_STAR10,
@@ -197,6 +230,7 @@ def get_cell_integrals(redshift,user_params,cosmo_params,astro_params,flag_optio
         0.,
         user_params.INTEGRATION_METHOD_ATOMIC,
     )
+
     integral_fesc = lib.Nion_ConditionalM(
         growth,
         lnMmin,
@@ -204,7 +238,7 @@ def get_cell_integrals(redshift,user_params,cosmo_params,astro_params,flag_optio
         cell_mass.value,
         sigma_cell,
         delta,
-        10**astro_params.M_TURN,
+        Mturn_acg,
         astro_params.ALPHA_STAR,
         astro_params.ALPHA_ESC,
         10**astro_params.F_STAR10,
@@ -213,10 +247,72 @@ def get_cell_integrals(redshift,user_params,cosmo_params,astro_params,flag_optio
         Mlim_Fesc,
         user_params.INTEGRATION_METHOD_ATOMIC,
     )
+    
+    if flag_options.USE_MINI_HALOS:
+        integral_stars_MINI = lib.Nion_ConditionalM_MINI(
+            growth,
+            lnMmin,
+            lnMmax,
+            cell_mass.value,
+            sigma_cell,
+            delta,
+            Mturn_mcg,
+            Mturn_acg,
+            astro_params.ALPHA_STAR_MINI,
+            0.,
+            10**astro_params.F_STAR7_MINI,
+            1.,
+            Mlim_Fstar,
+            0.,
+            user_params.INTEGRATION_METHOD_MINI,
+        )
+
+        integral_fesc_MINI = lib.Nion_ConditionalM_MINI(
+            growth,
+            lnMmin,
+            lnMmax,
+            cell_mass.value,
+            sigma_cell,
+            delta,
+            Mturn_mcg,
+            Mturn_acg,
+            astro_params.ALPHA_STAR_MINI,
+            astro_params.ALPHA_ESC,
+            10**astro_params.F_STAR7_MINI,
+            10**astro_params.F_ESC7_MINI,
+            Mlim_Fstar,
+            Mlim_Fesc,
+            user_params.INTEGRATION_METHOD_MINI,
+        )
+        
+    integral_xray = lib.Xray_ConditionalM(
+        growth,
+        lnMmin,
+        lnMmax,
+        cell_mass.value,
+        sigma_cell,
+        delta,
+        Mturn_mcg,
+        Mturn_acg,
+        astro_params.ALPHA_STAR,
+        astro_params.ALPHA_STAR_MINI,
+        10**astro_params.F_STAR10,
+        10**astro_params.F_STAR7_MINI,
+        Mlim_Fstar,
+        Mlim_Fstar_MINI,
+        user_params.INTEGRATION_METHOD_MINI,
+    )
 
     #TODO: add minihalos
-
-    return m_integral,integral_starsonly,integral_fesc
+    out = {
+        'mass' : m_integral,
+        'stars' : integral_stars,
+        'stars_mini' :integral_stars_MINI,
+        'fesc' : integral_fesc,
+        'fesc_mini' : integral_fesc_MINI,
+        'xray' : integral_xray,
+    }
+    return out
 
 
 #gets expected HaloBox Values given a cell delta.
@@ -550,12 +646,7 @@ def match_global_function(fields,lc,**kwargs):
 
     s_per_yr = 60*60*24 * 365.25
     
-    lib.Broadcast_struct_global_all(
-        user_params.cstruct,
-        cosmo_params.cstruct,
-        astro_params.cstruct,
-        flag_options.cstruct
-    )
+    lib.Broadcast_struct_global_all(user_params.cstruct, cosmo_params.cstruct, astro_params.cstruct, flag_options.cstruct)
     lib.init_ps()
 
     if user_params.INTEGRATION_METHOD_ATOMIC == 1 or user_params.INTEGRATION_METHOD_MINI == 1:
@@ -583,11 +674,12 @@ def match_global_function(fields,lc,**kwargs):
     rhocrit = (cosmo_params.cosmo.critical_density(0)).to('M_sun Mpc-3').value
     hubble = cosmo_params.cosmo.H(redshifts).to('s-1').value
     
-    need_fesc_acg = field in ("n_ion","F_coll","whalo_sfr","xH_box")
-    need_fesc_mcg = field in ("n_ion","F_coll_MINI","whalo_sfr","xH_box")
-    need_star_acg = field in ("halo_xray","halo_stars","halo_sfr")
-    need_star_mcg = field in ("halo_xray","halo_stars_mini","halo_sfr_mini")
-    need_fcoll = field in ("halo_mass")
+    need_fesc_acg = any(field in ("n_ion","F_coll","whalo_sfr","xH_box") for field in fields)
+    need_fesc_mcg = any(field in ("n_ion","F_coll_MINI","whalo_sfr","xH_box") for field in fields)
+    need_star_acg = any(field in ("halo_xray","halo_stars","halo_sfr") for field in fields)
+    need_star_mcg = any(field in ("halo_xray","halo_stars_mini","halo_sfr_mini") for field in fields)
+    need_fcoll = any(field in ("halo_mass") for field in fields)
+    need_xray = "halo_xray" in fields and lc.flag_options.USE_HALO_FIELD
 
     ap_c = astro_params.cdict
 
@@ -604,13 +696,13 @@ def match_global_function(fields,lc,**kwargs):
             ap_c["F_STAR7_MINI"],ap_c["F_ESC7_MINI"],
             Mlim_Fstar_MINI,Mlim_Fesc_MINI
         )
-    if need_fesc_acg:
+    if need_star_acg:
         star_acg_integral = np.vectorize(lib.Nion_General)(
             redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
             ave_mturns,ap_c["ALPHA_STAR"],0.,
             ap_c["F_STAR10"],1.,Mlim_Fstar,0.
         )
-    if need_fesc_mcg:
+    if need_star_mcg:
         star_mcg_integral = np.vectorize(lib.Nion_General_MINI)(
             redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
             ave_mturns_mini,ave_mturns,ap_c["ALPHA_STAR_MINI"],0.,
@@ -619,6 +711,14 @@ def match_global_function(fields,lc,**kwargs):
         )
     if need_fcoll:
         fcoll_integral = np.vectorize(lib.Fcoll_General)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'])
+    if need_xray:
+        xray_integral = np.vectorize(lib.Xray_General)(
+            redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
+            ave_mturns_mini,ave_mturns,ap_c['ALPHA_STAR'],
+            ap_c['ALPHA_STAR_MINI'],ap_c["F_STAR10"],ap_c["F_STAR7_MINI"],
+            ap_c['L_X'],ap_c['L_X_MINI'],1/hubble,ap_c['t_STAR'],
+            Mlim_Fstar,Mlim_Fstar_MINI,
+        )
 
     results = []
     for field in fields:
@@ -641,9 +741,12 @@ def match_global_function(fields,lc,**kwargs):
             if flag_options.USE_MINI_HALOS:
                 result += fesc_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * hubble / ap_c["t_STAR"] * p21c.global_params.Pop3_ion
         elif field == 'halo_xray':
-            result = star_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["L_X"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
-            if flag_options.USE_MINI_HALOS:
-                result += star_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["L_X_MINI"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
+            if lc.flag_options.USE_HALO_FIELD:
+                result = star_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["L_X"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
+                if flag_options.USE_MINI_HALOS:
+                    result += star_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["L_X_MINI"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
+            else:
+                result = xray_integral * cosmo_params.OMm * rhocrit
         elif field == 'xH_box':
             result = fesc_acg_integral * ap_c["F_STAR10"] * p21c.global_params.Pop2_ion * ap_c["F_ESC10"]
             if flag_options.USE_MINI_HALOS:
@@ -655,6 +758,6 @@ def match_global_function(fields,lc,**kwargs):
         else:
             raise ValueError("bad field")
 
-        results += result
+        results += [result]
     
-    return np.array(result)
+    return np.array(results)

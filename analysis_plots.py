@@ -409,8 +409,8 @@ def global_integral_plot(lcfiles,fields,outname,names,zmax=20):
 
         #only do expected globals for first LC (assume same params)
         if j==0:
-            expected_global = match_global_function(field,lc,**kwargs_expected)[plot_idx]
-            [ax[0,i].plot(plot_z,expected_global[i,:],'r:',linewidth=5) for i,field in enumerate(fields)]
+            expected_global = match_global_function(fields,lc,**kwargs_expected)[:,plot_idx]
+            [ax[0,i].plot(plot_z,expected_global[i],'r:',linewidth=5) for i,field in enumerate(fields)]
 
         for i,field in enumerate(fields):
             field_lc = 'global_' + field
@@ -427,7 +427,7 @@ def global_integral_plot(lcfiles,fields,outname,names,zmax=20):
                     ax[0,i].plot(plot_z,f_array2,color=f'C{j:02d}',linestyle=':')
 
             ax[0,i].plot(plot_z,f_array,color=f'C{j:02d}',label=names[j] if names else None)
-            ax[1,i].plot(plot_z,(f_array/expected_global[i,:]),color=f'C{j:02d}')
+            ax[1,i].plot(plot_z,(f_array/expected_global[i]),color=f'C{j:02d}')
 
     for i,field in enumerate(fields):
         ax[0,i].set_yscale('log')
@@ -1105,3 +1105,4 @@ def angular_lc_plot(lc,lcn,fname,kinds=('brightness_temp',)):
     ax.text(0.5, -0.06, "Redshift", fontsize=14, transform=ax.transAxes)
 
     fig.savefig(fname)
+
