@@ -152,8 +152,6 @@ def get_props_from_halofield(halo_field,inputs_override,sel=None,kinds=['sfr',])
     pt_halos.sfr_rng[...] = halo_field.sfr_rng[sel]
     pt_halos.xray_rng[...] = halo_field.xray_rng[sel]
 
-    print(pt_halos,flush=True)
-
     #get props w/o feedback
     props_out = np.zeros(int(12*pt_halos.n_halos)).astype('f4')
     lib.test_halo_props(
@@ -183,33 +181,51 @@ def get_props_from_halofield(halo_field,inputs_override,sel=None,kinds=['sfr',])
     
     return {kind:props_out[:,index_map[kind]] for kind in kinds}
 
-def get_cell_integrals(redshift,user_params,cosmo_params,astro_params,flag_options,delta):
+def get_cell_integrals(redshift,inputs,delta,lnMmin,lnMmax):
     #pass info to backend
-    lib.Broadcast_struct_global_all(user_params.cstruct, cosmo_params.cstruct, astro_params.cstruct, flag_options.cstruct)
+    lib.Broadcast_struct_global_all(
+        inputs.user_params.cstruct,
+        inputs.cosmo_params.cstruct,
+        inputs.astro_params.cstruct,
+        inputs.flag_options.cstruct
+    )
     lib.init_ps()
-    if user_params.INTEGRATION_METHOD_ATOMIC == 1:
-        lib.initialise_GL(100, lnMmin, lnMmax)
 
-    rhocrit = cosmo_params.cosmo.critical_density(0)
+    ap_c = inputs.astro_params.cdict
+
+    rhocrit = inputs.cosmo_params.cosmo.critical_density(0)
     growth = lib.dicke(redshift)
-    lnMmin = np.log(user_params.SAMPLER_MIN_MASS)
+    lnMmin = np.log(inputs.user_params.SAMPLER_MIN_MASS)
     lnMmax = np.log(1e15) #must be > cell but < table max
-    cell_volume = (user_params.BOX_LEN * U.Mpc / user_params.HII_DIM) ** 3
-    cell_mass = (rhocrit * cosmo_params.OMm * cell_volume).to("M_sun")
+    cell_volume = (inputs.user_params.BOX_LEN * U.Mpc / inputs.user_params.HII_DIM) ** 3
+    cell_mass = (rhocrit * inputs.cosmo_params.OMm * cell_volume).to("M_sun")
     sigma_cell = lib.sigma_z0(cell_mass.value)
-    Mlim_Fstar = 1e10 * (10**astro_params.F_STAR10) ** (-1.0 / astro_params.ALPHA_STAR)
-    Mlim_Fesc = 1e10 * (10**astro_params.F_ESC10) ** (-1.0 / astro_params.ALPHA_ESC)
-
-    Mturn_acg = lib.atomic_cooling_threshold(redshift) if flag_options.USE_MINI_HALOS else 10**astro_params.M_TURN
-    Mturn_mcg = 10**astro_params.M_TURN
-
+    Mlim_Fstar = 1e10 * (ap_c['F_STAR10']) ** (-1.0 / ap_c['ALPHA_STAR'])
+    Mlim_Fesc = 1e10 * (ap_c['F_ESC10']) ** (-1.0 / ap_c['ALPHA_ESC'])
     
+    Mlim_Fstar_MINI = 1e7 * (ap_c['F_STAR7_MINI']) ** (-1.0 / ap_c['ALPHA_STAR_MINI'])
+    Mlim_Fesc_MINI = 1e7 * (ap_c['F_ESC7_MINI']) ** (-1.0 / ap_c['ALPHA_ESC'])
+
+    Mturn_acg = lib.atomic_cooling_threshold(redshift) if inputs.flag_options.USE_MINI_HALOS else ap_c['M_TURN']
+    Mturn_mcg = ap_c['M_TURN'] # no LW
+
+    t_h = 1 / inputs.cosmo_params.cosmo.H(redshift).to('s-1').value
+
+    if lnMmax < 0:
+        lnMMax = cell_mass
+        
+    if (
+        inputs.user_params.INTEGRATION_METHOD_ATOMIC == 'GAUSS-LEGENDRE'
+        or inputs.user_params.INTEGRATION_METHOD_MINI == 'GAUSS-LEGENDRE'
+    ):
+        lib.initialise_GL(lnMmin, lnMmax)
+
     #NOTE: Minihalo integrals assume no feedback
     m_integral = lib.Mcoll_Conditional(
             growth,
             lnMmin,
             lnMmax,
-            cell_mass.value,
+            np.log(cell_mass.value),
             sigma_cell,
             delta,
             0,
@@ -218,98 +234,102 @@ def get_cell_integrals(redshift,user_params,cosmo_params,astro_params,flag_optio
         growth,
         lnMmin,
         lnMmax,
-        cell_mass.value,
+        np.log(cell_mass.value),
         sigma_cell,
         delta,
         Mturn_acg,
-        astro_params.ALPHA_STAR,
-        0.,
-        10**astro_params.F_STAR10,
-        1.,
+        ap_c['ALPHA_STAR'],
+        ap_c['ALPHA_ESC'],
+        ap_c['F_STAR10'],
+        ap_c['F_ESC10'],
         Mlim_Fstar,
-        0.,
-        user_params.INTEGRATION_METHOD_ATOMIC,
+        Mlim_Fesc,
+        inputs.user_params.cdict['INTEGRATION_METHOD_ATOMIC'],
     )
 
     integral_fesc = lib.Nion_ConditionalM(
         growth,
         lnMmin,
         lnMmax,
-        cell_mass.value,
+        np.log(cell_mass.value),
         sigma_cell,
         delta,
         Mturn_acg,
-        astro_params.ALPHA_STAR,
-        astro_params.ALPHA_ESC,
-        10**astro_params.F_STAR10,
-        10**astro_params.F_ESC10,
+        ap_c['ALPHA_STAR'],
+        ap_c['ALPHA_ESC'],
+        ap_c['F_STAR10'],
+        ap_c['F_ESC10'],
         Mlim_Fstar,
         Mlim_Fesc,
-        user_params.INTEGRATION_METHOD_ATOMIC,
+        inputs.user_params.cdict['INTEGRATION_METHOD_ATOMIC'],
     )
     
-    if flag_options.USE_MINI_HALOS:
+    if inputs.flag_options.USE_MINI_HALOS:
         integral_stars_MINI = lib.Nion_ConditionalM_MINI(
             growth,
             lnMmin,
             lnMmax,
-            cell_mass.value,
+            np.log(cell_mass.value),
             sigma_cell,
             delta,
             Mturn_mcg,
             Mturn_acg,
-            astro_params.ALPHA_STAR_MINI,
+            ap_c['ALPHA_STAR_MINI'],
             0.,
-            10**astro_params.F_STAR7_MINI,
+            ap_c['F_STAR7_MINI'],
             1.,
             Mlim_Fstar,
             0.,
-            user_params.INTEGRATION_METHOD_MINI,
+            inputs.user_params.cdict['INTEGRATION_METHOD_ATOMIC'],
         )
 
         integral_fesc_MINI = lib.Nion_ConditionalM_MINI(
             growth,
             lnMmin,
             lnMmax,
-            cell_mass.value,
+            np.log(cell_mass.value),
             sigma_cell,
             delta,
             Mturn_mcg,
             Mturn_acg,
-            astro_params.ALPHA_STAR_MINI,
-            astro_params.ALPHA_ESC,
-            10**astro_params.F_STAR7_MINI,
-            10**astro_params.F_ESC7_MINI,
+            ap_c['ALPHA_STAR_MINI'],
+            ap_c['ALPHA_ESC'],
+            ap_c['F_STAR7_MINI'],
+            ap_c['F_ESC7_MINI'],
             Mlim_Fstar,
             Mlim_Fesc,
-            user_params.INTEGRATION_METHOD_MINI,
+            inputs.user_params.cdict['INTEGRATION_METHOD_MINI'],
         )
         
     integral_xray = lib.Xray_ConditionalM(
+        redshift,
         growth,
         lnMmin,
         lnMmax,
-        cell_mass.value,
+        np.log(cell_mass.value),
         sigma_cell,
         delta,
         Mturn_mcg,
         Mturn_acg,
-        astro_params.ALPHA_STAR,
-        astro_params.ALPHA_STAR_MINI,
-        10**astro_params.F_STAR10,
-        10**astro_params.F_STAR7_MINI,
+        ap_c['ALPHA_STAR'],
+        ap_c['ALPHA_STAR_MINI'],
+        ap_c['F_STAR10'],
+        ap_c['F_STAR7_MINI'],
         Mlim_Fstar,
         Mlim_Fstar_MINI,
-        user_params.INTEGRATION_METHOD_MINI,
+        ap_c['L_X'],
+        ap_c['L_X_MINI'],
+        t_h,
+        ap_c['t_STAR'],
+        inputs.user_params.cdict['INTEGRATION_METHOD_ATOMIC'],
     )
 
-    #TODO: add minihalos
     out = {
         'mass' : m_integral,
         'stars' : integral_stars,
-        'stars_mini' :integral_stars_MINI,
+        'stars_mini' : integral_stars_MINI if inputs.flag_options.USE_MINI_HALOS else None,
         'fesc' : integral_fesc,
-        'fesc_mini' : integral_fesc_MINI,
+        'fesc_mini' : integral_fesc_MINI if inputs.flag_options.USE_MINI_HALOS else None,
         'xray' : integral_xray,
     }
     return out
@@ -318,44 +338,45 @@ def get_cell_integrals(redshift,user_params,cosmo_params,astro_params,flag_optio
 #gets expected HaloBox Values given a cell delta.
 #  Should be equivalent to calling backend (set_fixed_grids)
 #  on one cell w/o feedback
-def get_expected_lagrangian(redshift,user_params,cosmo_params,astro_params,flag_options,delta):
+def get_expected_lagrangian(redshift,inputs,delta,lnMmin,lnMmax):
+    lib.initialiseSigmaMInterpTable(inputs.user_params.SAMPLER_MIN_MASS, 1e16)
 
-    lib.initialiseSigmaMInterpTable(user_params.SAMPLER_MIN_MASS, 1e16)
-
+    ap_c = inputs.astro_params.cdict
     #setup cell values & constants
-    t_h = (1 / cosmo_params.cosmo.H(z)).to('s-1')
+    t_h = (1 / inputs.cosmo_params.cosmo.H(redshift)).to('s').value
     s_per_yr = 60 * 60 * 24 * 365.25
 
-    rhocrit = cosmo_params.cosmo.critical_density(0)
-    prefactor_mass = rhocrit * cosmo_params.OMm
-    prefactor_stars = rhocrit * cosmo_params.OMb * astro_params.F_STAR10
-    prefactor_sfr = prefactor_stars / astro_params.t_star / t_h
-    prefactor_nion = prefactor_stars * astro_params.fesc_10 * p21c.global_params.Pop2_ion
-    prefactor_wsfr = prefactor_sfr * astro_params.fesc_10
-    prefactor_xray = prefactor_sfr * astro_params.l_x * s_per_yr
+    rhocrit = inputs.cosmo_params.cosmo.critical_density(0).to('Msun Mpc-3').value
+    prefactor_mass = rhocrit * inputs.cosmo_params.OMm
+    prefactor_stars = rhocrit * inputs.cosmo_params.OMb * ap_c['F_STAR10']
+    prefactor_sfr = prefactor_stars / ap_c['t_STAR'] / t_h
+    prefactor_nion = prefactor_stars * ap_c['F_ESC10'] * p21c.global_params.Pop2_ion
+    prefactor_wsfr = prefactor_sfr * ap_c['F_ESC10']
+    prefactor_xray = rhocrit * inputs.cosmo_params.OMm
 
     #TODO: add minihalos
     # prefactor_stars_mini = rhocrit * cosmo_params.OMb * astro_params.F_STAR7
-    # prefactor_sfr_mini = prefactor_stars_mini / astro_params.t_star / t_h
+    # prefactor_sfr_mini = prefactor_stars_mini / astro_params.t_STAR / t_h
     # prefactor_nion_mini = prefactor_stars_mini * astro_params.fesc_7 * p21c.global_params.Pop3_ion
     # prefactor_wsfr_mini = prefactor_sfr_mini * astro_params.fesc_7
     # prefactor_xray_mini = prefactor_sfr_mini * astro_params.l_x_mini * s_per_yr
 
-    m_int, s_int, f_int = get_cell_integrals(redshift,user_params,cosmo_params,astro_params,flag_options,delta)
+    cint_dict = get_cell_integrals(redshift,inputs,delta,lnMmin,lnMmax)
 
     results = {
-        'halo_mass': m_int * prefactor_mass,
-        'halo_stars' : s_int * prefactor_stars,
-        'halo_sfr' : s_int * prefactor_sfr,
-        'n_ion' : f_int * prefactor_nion,
-        'fescweighted_sfr' : f_int * prefactor_wsfr,
-        'halo_xray' : s_int * prefactor_xray,
+        'halo_mass': cint_dict['mass'] * prefactor_mass,
+        'halo_stars' : cint_dict['stars'] * prefactor_stars,
+        'halo_sfr' : cint_dict['stars'] * prefactor_sfr,
+        'n_ion' : cint_dict['fesc'] * prefactor_nion,
+        'fescweighted_sfr' : cint_dict['fesc'] * prefactor_wsfr,
+        'halo_xray' : cint_dict['xray'] * prefactor_xray,
     }
 
     return results
 
 def get_expected_eulerian(redshift,user_params,cosmo_params,astro_params,flag_options,delta,convert=False):
-    #Mo & White Conversion
+    #Either we apply the Mo & White Conversion to get the Lagrangian back,
+    # OR we do what 21cmfastv3 does and pretend we're Lagrangian then multiply by (1+delta)
     if convert:
         dp1 = delta + 1
         delta_0 = -1.35*dp1**-2./3. + 0.78785*dp1**-0.58661 - 1.12431*dp1**-0.5 + 1.68647
@@ -368,25 +389,28 @@ def get_expected_eulerian(redshift,user_params,cosmo_params,astro_params,flag_op
     return results
 
 #makes a grid from a halo catalogue by direct summation
-def grid_halo_cat(halo_cat,user_params):
-    lores = user_params.HII_DIM
-    hires = user_params.DIM
-    cell_volume = (user_params.BOX_LEN * U.Mpc / user_params.HII_DIM) ** 3
+def grid_halo_cat(halo_cat,inputs):
+    lores = halo_cat.user_params.HII_DIM
+    hires = halo_cat.user_params.DIM
+    cell_volume = (
+        halo_cat.user_params.BOX_LEN
+         * U.Mpc
+          / halo_cat.user_params.HII_DIM
+    ) ** 3
     bins_crd = np.linspace(-0.5,lores+0.5,num=lores+1)
-    masses = getattr(halo_cat,'halo_masses')
-    crd = getattr(halo_cat,'halo_coords')
+    masses = getattr(halo_cat,'halo_masses')[0:halo_cat.n_halos+1]
+    crd = getattr(halo_cat,'halo_coords')[0:halo_cat.n_halos+1]
     crd = crd.reshape(masses.size,3)
     crd = crd / hires * lores
 
-
-    nion,xray =  get_props_from_halofield(halo_cat,kinds=['nion','xray'])
-    logger.info(f'doing hist crd {crd.shape} props ({masses.shape},{nion.shape},{xray.shape}) bins {bins_crd.shape}')
+    props =  get_props_from_halofield(halo_cat,inputs,kinds=['nion','xray'])
+    logger.info(f'crd {crd.shape} n {props['nion'].shape}')
     mass_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=masses)
-    nion_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=nion)
-    xray_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=xray)
+    nion_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=props['nion'])
+    xray_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=props['xray'])
     mass_grid = mass_grid * U.M_sun / cell_volume
     nion_grid = nion_grid / cell_volume
-    xray_grid = xray_grid  * U.erg / U.s / cell_volume
+    xray_grid = xray_grid  * U.erg / U.s / cell_volume * 1e38
 
     logger.info('done')
 
@@ -607,7 +631,7 @@ def get_lc_powerspectra(lc_list,z_list,kind='brightness_temp',kind2=None,subtrac
                 z_targets[j] = lc.node_redshifts[np.argmax(lc.global_brightness_temp)]
             else:
                 raise ValueError(f"{zt} not a real ztype")
-        logger.info(f"XHI targets {z_list} ({z_type}) ==> {z_targets}")
+        logger.info(f"targets {z_list} ({z_type}) ==> {z_targets}")
         #subtract/divide the means in each slice
         field_1 = getattr(lc,kind)
         mean_z_1 = getattr(lc,kind).mean(axis=(0,1))[None,None,:]
@@ -746,7 +770,7 @@ def match_global_function(fields,lc,**kwargs):
                 if flag_options.USE_MINI_HALOS:
                     result += star_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["L_X_MINI"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
             else:
-                result = xray_integral * cosmo_params.OMm * rhocrit
+                result = xray_integral * cosmo_params.OMm * rhocrit * 1e-38
         elif field == 'xH_box':
             result = fesc_acg_integral * ap_c["F_STAR10"] * p21c.global_params.Pop2_ion * ap_c["F_ESC10"]
             if flag_options.USE_MINI_HALOS:

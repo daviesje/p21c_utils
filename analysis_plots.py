@@ -20,7 +20,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def summary_plot(lc_file,cv_file,hf_file,outname):
+def summary_plot(lc_file,hf_file,outname):
     fig,axs = plt.subplots(2,2,figsize=(8,8),layout="constrained",squeeze=False)
     axs = axs.flatten()
     fig.get_layout_engine().set(w_pad=2 / 72, h_pad=2 / 72, hspace=0.0,
@@ -926,7 +926,6 @@ def largescale_powerplot(lc_list,output='',names=None,k_target=(0.1,),z_max=16,k
         fig.get_layout_engine().set(w_pad=2 / 72, h_pad=2 / 72, hspace=0.0,
                                 wspace=0.0)
     
-    k_text = []
     if k_lab is None:
         k_text = [rf'$k={{{kt:.2f}}}$' for kt in k_target]
     else:
@@ -939,14 +938,17 @@ def largescale_powerplot(lc_list,output='',names=None,k_target=(0.1,),z_max=16,k
         ax.set_ylim(power_arr[:,:,k_idx[0,i]].max()/100,power_arr[:,:,k_idx[0,i]].max())
         ax.grid()
         ax_text = k_text[i] if subplot_k else names[i]
-        axs[i].text(0.05,0.95,ax_text,transform=axs[i].transAxes,verticalalignment='top',horizontalalignment='left',
-                        bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
+        if ax_text:
+            axs[i].text(0.05,0.95,ax_text,transform=axs[i].transAxes,verticalalignment='top',horizontalalignment='left',
+                            bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
 
     lines =  ['-',':','--','-.','-',':','--','-.']
     for i,k_t in enumerate(k_target):
         for j in range(n_lc):
             ax_idx = i if subplot_k else j
             line_idx = j if subplot_k else i
+            logger.info(f'k_target {i} {k_t} lc {j}')
+            logger.info(f'ax {ax_idx} line {line_idx}')
             axs[ax_idx].semilogy(z_ps[j,:],power_arr[j,:,k_idx[j,i]],color=f'C{line_idx:d}',linestyle=lines[line_idx],
                                  label=names[j] if subplot_k else k_text[i],
                                  linewidth=1.5)
