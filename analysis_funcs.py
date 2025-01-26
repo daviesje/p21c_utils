@@ -8,9 +8,19 @@ import py21cmfast as p21c
 from py21cmfast.c_21cmfast import ffi,lib
 from astropy import units as U
 
+from scipy.ndimage import gaussian_filter1d, uniform_filter1d
+
 import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+def lightcone_axis_mean(lc,kind='brightness_temp',smooth_cells=3,smooth_filter='boxcar'):
+    lc_z_means = getattr(lc,kind).mean(axis=(0,1))
+    if smooth_filter == 'boxcar':
+        lc_z_means = uniform_filter1d(lc_z_means,smooth_cells,mode='reflect')
+    if smooth_filter == 'gaussian':
+        lc_z_means = gaussian_filter1d(lc_z_means,smooth_cells,mode='reflect')
+    return lc_z_means
 
 #Generates fake ionized, spintemp and perturbed halo fields for getting fields w/o feedback
 def get_fake_boxes(inputs,redshift):
@@ -132,7 +142,7 @@ def get_halo_fields(redshift,inputs,init_box,ptb,lagrangian=False):
 
 #gets properties from either HaloField or PerturbHaloField
 #ignoring feedback and with possible alterations to parameters
-def get_props_from_halofield(halo_field,inputs_override,sel=None,kinds=['sfr',]):
+def get_props_from_halofield(halo_field,inputs,sel=None,kinds=['sfr',]):
     #fake pt_halos
     zero_array = ffi.cast("float *", np.zeros(halo_field.user_params.HII_DIM**3,dtype='f4').ctypes.data)
 
@@ -141,7 +151,7 @@ def get_props_from_halofield(halo_field,inputs_override,sel=None,kinds=['sfr',])
     n_halos = halo_field.halo_masses[sel].size
 
     pt_halos = p21c.PerturbHaloField(
-        inputs=inputs_override,
+        inputs=inputs,
         buffer_size=n_halos
     )
     pt_halos()
@@ -156,10 +166,10 @@ def get_props_from_halofield(halo_field,inputs_override,sel=None,kinds=['sfr',])
     props_out = np.zeros(int(12*pt_halos.n_halos)).astype('f4')
     lib.test_halo_props(
         halo_field.redshift,
-        inputs_override.user_params.cstruct,
-        inputs_override.cosmo_params.cstruct,
-        inputs_override.astro_params.cstruct,
-        inputs_override.flag_options.cstruct,
+        inputs.user_params.cstruct,
+        inputs.cosmo_params.cstruct,
+        inputs.astro_params.cstruct,
+        inputs.flag_options.cstruct,
         zero_array,
         zero_array,
         zero_array,
@@ -624,7 +634,13 @@ def get_lc_powerspectra(lc_list,z_list,kind='brightness_temp',kind2=None,subtrac
             if zt.lower() == 'redshift':
                 z_targets[j] = z
             elif zt.lower() == 'xhi':
-                z_targets[j] = np.interp(z,lc.global_xHI[::-1],lc.node_redshifts[::-1])
+                z_targets[j] = np.interp(z,lc.global_xH[::-1],lc.node_redshifts[::-1])
+            elif zt.lower() == 'bt_zero':
+                #we want the reheating shift, not post-ion or re-coupling
+                #interpolate between nodes by finding the last crossing of zero
+                idx_heat = np.argwhere((np.diff(np.sign(lc.global_brightness_temp)) >= 1)).min()
+                interp_range = lc.global_brightness_temp[idx_heat-10:idx_heat+10] #increasing
+                z_targets[j] = np.interp(0,interp_range,lc.node_redshifts[idx_heat-10:idx_heat+10])
             elif zt.lower() == 'bt_min':
                 z_targets[j] = lc.node_redshifts[np.argmin(lc.global_brightness_temp)]
             elif zt.lower() == 'bt_max':

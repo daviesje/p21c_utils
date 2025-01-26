@@ -81,6 +81,7 @@ def read_firstlight(z,htime_yr):
     return df_out
 
 def read_astrid(cosmo,fname,z):
+    logger.info(f"reading {fname}")
     df = pd.read_json(fname,orient='index')
 
     #set SFR to units of Msun / hubble time
