@@ -20,7 +20,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def summary_plot(lc_file,cv_file,hf_file,outname):
+def summary_plot(lc_file,hf_file,outname):
     fig,axs = plt.subplots(2,2,figsize=(8,8),layout="constrained",squeeze=False)
     axs = axs.flatten()
     fig.get_layout_engine().set(w_pad=2 / 72, h_pad=2 / 72, hspace=0.0,
@@ -189,7 +189,7 @@ def gal_colocation_plot(coev_list,halofield_list,names,outname,cv_kinds=None,hf_
         if hfk == "Muv":
             #points and labels will be overwritten by the same thing
             points = []
-            sel_bins = np.array([-18,-19,-20,-21],dtype=int)
+            sel_bins = np.array([-18,-20,-22,-24],dtype=int)
             marker_list = ['o','s','v','X']
             labels = [rf'$M_{{uv}} \in [{{{sel_bins[j]}}},{{{sel_bins[j+1]}}}]$' for j in range(sel_bins.size-1)]
             for j in range(len(sel_bins) - 1):
@@ -857,7 +857,7 @@ def lc_seriesplot(lc_list,kinds,zrange,output,names=None,vertical=True):
                                                         cbar_horizontal=vertical,vmin=spec['vmin'],vmax=spec['vmax'],z_range=zrange)
             if names:
                 axs[ax_idx].text(0.05,0.99,names[i],transform=axs[ax_idx].transAxes,verticalalignment='top',horizontalalignment='left',
-                        bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
+                        bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'),fontsize=8.)
 
     fix_ticks(fig,sharex=True,sharey=True)
 
@@ -937,11 +937,10 @@ def largescale_powerplot(lc_list,output='',names=None,k_target=(0.1,),z_max=16,k
     n_plots = k_target.size if subplot_k else len(lc_list)
     if axs is None:
         ax_mode = False
-        fig,axs = plt.subplots(1,n_plots,figsize=(8,8/n_plots),sharey=True,layout='constrained')
+        fig,axs = plt.subplots(n_plots,1,figsize=(4,3*n_plots),sharey=True,layout='constrained')
         fig.get_layout_engine().set(w_pad=2 / 72, h_pad=2 / 72, hspace=0.0,
                                 wspace=0.0)
     
-    k_text = []
     if k_lab is None:
         k_text = [rf'$k={{{kt:.2f}}}$' for kt in k_target]
     else:
@@ -954,19 +953,22 @@ def largescale_powerplot(lc_list,output='',names=None,k_target=(0.1,),z_max=16,k
         ax.set_ylim(power_arr[:,:,k_idx[0,i]].max()/100,power_arr[:,:,k_idx[0,i]].max())
         ax.grid()
         ax_text = k_text[i] if subplot_k else names[i]
-        axs[i].text(0.05,0.95,ax_text,transform=axs[i].transAxes,verticalalignment='top',horizontalalignment='left',
-                        bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
+        if ax_text:
+            axs[i].text(0.05,0.95,ax_text,transform=axs[i].transAxes,verticalalignment='top',horizontalalignment='left',
+                            bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
 
     lines =  ['-',':','--','-.','-',':','--','-.']
     for i,k_t in enumerate(k_target):
         for j in range(n_lc):
             ax_idx = i if subplot_k else j
             line_idx = j if subplot_k else i
+            logger.info(f'k_target {i} {k_t} lc {j}')
+            logger.info(f'ax {ax_idx} line {line_idx}')
             axs[ax_idx].semilogy(z_ps[j,:],power_arr[j,:,k_idx[j,i]],color=f'C{line_idx:d}',linestyle=lines[line_idx],
                                  label=names[j] if subplot_k else k_text[i],
                                  linewidth=1.5)
         
-    axs[0].legend(loc=4)
+    axs[0].legend()
     if not ax_mode:
         fix_ticks(fig)
         fig.savefig(output)
@@ -984,10 +986,8 @@ def powerspec_plot(lc_list,output='',names=None,z_out=(11,9,7),kind='brightness_
     save_fig = False
     if axs is None:
         save_fig = True
-        fig,axs = plt.subplots(1,n_plots,figsize=(8,8/n_plots),gridspec_kw={'hspace':0.},sharey=True,sharex=True,layout='constrained',squeeze=False)
-        axs=axs.flatten()
-        fig.get_layout_engine().set(w_pad=2 / 72, h_pad=2 / 72, hspace=0.0,
-                                wspace=0.0)
+        fig,axs = plt.subplots(n_plots,1,figsize=(4,2.5*n_plots),gridspec_kw={'hspace':0.},sharey=True,sharex=True,layout='constrained')
+        fig.get_layout_engine().set(w_pad=2 / 72, h_pad=2 / 72, hspace=0.0, wspace=0.0)
     
     single_lc = len(lc_list) == 1
 
@@ -1000,9 +1000,11 @@ def powerspec_plot(lc_list,output='',names=None,z_out=(11,9,7),kind='brightness_
             elif zt.lower() == 'xhi':
                 plottxt = rf'$X_{{HI}} \sim$ {z}'
             elif zt.lower() == 'bt_min':
-                plottxt = rf'$\delta T_b$ Min.'
+                plottxt = rf'$\langle \delta T_b \rangle$ Min.'
+            elif zt.lower() == 'bt_zero':
+                plottxt = rf'$\langle \delta T_b \rangle \sim 0$.'
             elif zt.lower() == 'bt_max':
-                plottxt = rf'$\delta T_b$ Max.'
+                plottxt = rf'$\langle \delta T_b \rangle$ Max.'
             z_lab.append(plottxt)
 
     if names is None:
@@ -1021,10 +1023,11 @@ def powerspec_plot(lc_list,output='',names=None,z_out=(11,9,7),kind='brightness_
         ax.grid()
             
         plottxt = names[i] if not subplot_z else z_lab[i]
-            
-        axs[i].text(0.05,0.95,plottxt,transform=axs[i].transAxes,verticalalignment='top',
-                    horizontalalignment='left',
-                    bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
+        
+        if save_fig:
+            axs[i].text(0.05,0.95,plottxt,transform=axs[i].transAxes,verticalalignment='top',
+                        horizontalalignment='left',
+                        bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
         
         axs[i].set_xscale('log')
         #crosses can go negative
@@ -1041,9 +1044,9 @@ def powerspec_plot(lc_list,output='',names=None,z_out=(11,9,7),kind='brightness_
             axs[ax_idx].plot(k_arr[j,i,:],power_arr[j,i,:],color=f'C{line_idx:d}',linestyle=lines[line_idx],
                                 label=names[j] if subplot_z else z_lab[i],linewidth=1.5)
 
-    if names[0]:
-        axs[0].legend(loc=4)
     if save_fig:
+        if names[0]:
+            axs[0].legend()
         fix_ticks(fig,sharex=True,sharey=True)
         fig.savefig(output)
 
