@@ -283,7 +283,7 @@ def ionisation_state_plot(cvfiles,outname):
 
     for i,cvfile in enumerate(cvfiles):
         logger.info(f'starting {i+1} of {len(cvfiles)}: {cvfile}')
-        cv = p21c.Coeval.read(cvfile,safe=False)
+        cv = p21c.Coeval.read(cvfile,safe=True)
         # cv = read_cv_ignoreparams(cvfile)
         x_vals = cv.density.flatten()
         z_vals = cv.xH_box.flatten()
@@ -295,18 +295,24 @@ def ionisation_state_plot(cvfiles,outname):
         ax[0,i].grid()
         bins = [bins_dens,bins_nion]
         ax[0,i].set_ylabel('n_ion/rhocrit')
+        ap_c = cv.astro_params.cdict
         #if we have no halos we do a dens vs xH histogram instead of a binned xH in nion and density
         rhocrit = (cv.cosmo_params.cosmo.critical_density(0)).to('M_sun Mpc-3').value
-        if hasattr(cv,"n_ion"):
-            y_vals = (cv.n_ion/rhocrit/cv.cosmo_params.OMb).flatten()            
+        if cv.flag_options.USE_HALO_FIELD:
+            const_factor = 1 / rhocrit / cv.cosmo_params.OMb
+            const_factor_mini = 0
+            # y_vals = (cv.n_ion/rhocrit/cv.cosmo_params.OMb).flatten()
         else:
-            y_vals = (
-                cv.Fcoll.flatten()
-                * (10**cv.astro_params.F_STAR10)
-                * (10**cv.astro_params.F_ESC10)
-                * cv.global_params['Pop2_ion']
-                * (1 + x_vals)
-            )
+            const_factor = ap_c["F_STAR10"] * ap_c["F_ESC10"] * cv.global_params["Pop2_ion"] * (1 + x_vals)
+            const_factor_mini = ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * cv.global_params["Pop3_ion"] * (1 + x_vals)
+
+        buf = cv.Fcoll
+        buf_mini = cv.Fcoll_MINI
+        if len(buf.shape) == 4:
+            buf = buf[0,...]
+            buf_mini = buf_mini[0,...]
+
+        y_vals = buf.flatten() * const_factor + buf_mini.flatten() * const_factor_mini
 
         hist,_,_,_ = binned_statistic_2d(x_vals,y_vals,values=z_vals,bins=bins,statistic='mean')
         im = ax[0,i].pcolormesh(bins[0],bins[1],hist.T,shading='flat',norm=norm)
@@ -333,7 +339,11 @@ def field_comparison_plot_grid(cvfiles,outname,kind='xH_box',logscale=False):
     for i,cvfile in enumerate(cvfiles):
         logger.info(f'reading {cvfile} ({i+1} of {len(cvfiles)})')
         cv = p21c.Coeval.read(cvfile,safe=False)
-        boxes += [getattr(cv,kind),]
+        
+        box = getattr(cv,kind)
+        if len(box.shape) == 4:
+            box = box[0,...] #take first (lowest) radius
+        boxes.append(box)
         dens_boxes += [cv.density,]
 
     for i,box in enumerate(boxes):
@@ -367,7 +377,11 @@ def field_comparison_plot(cvfiles,outname,kind='xH_box',logx=False):
     for i,cvfile in enumerate(cvfiles):
         logger.info(f'reading {cvfile} ({i+1} of {len(cvfiles)})')
         cv = p21c.Coeval.read(cvfile,safe=False)
-        boxes += [getattr(cv,kind),]
+        box = getattr(cv,kind)
+        if len(box.shape) == 4:
+            box = box[0,...] #take first (lowest) radius
+        boxes.append(box)
+        
         dens_boxes += [cv.density,]
 
     for i,box in enumerate(boxes):
@@ -405,7 +419,8 @@ def global_integral_plot(lcfiles,fields,outname,names,zmax=20):
         kwargs_expected = {'Mmin' : Mmin,
                 'Mmax' : Mmax,
                 'lnMmin' : np.log(Mmin),
-                'lnMmax' : np.log(Mmax)}
+                'lnMmax' : np.log(Mmax),
+            }
 
         #only do expected globals for first LC (assume same params)
         if j==0:

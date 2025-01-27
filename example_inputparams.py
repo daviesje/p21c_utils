@@ -77,7 +77,7 @@ def setup_params_from_title(title,hires=300,lores=100,boxlen=200,nthreads=1,minm
 
     #astro params
     lx = 40 if compat else 40.5
-    ap = p21c.AstroParams(L_X=lx,flag_options=fo)
+    ap = p21c.AstroParams(L_X=lx)
     #AP matching SERRA
     if "_SERRA" in title:
         ap = ap.clone(F_STAR10=-0.8,ALPHA_STAR=0.1,SIGMA_STAR=0.25,t_STAR=0.15,
