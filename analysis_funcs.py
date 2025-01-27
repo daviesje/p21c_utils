@@ -147,7 +147,7 @@ def get_props_from_halofield(halo_field,inputs,sel=None,kinds=['sfr',]):
     zero_array = ffi.cast("float *", np.zeros(halo_field.user_params.HII_DIM**3,dtype='f4').ctypes.data)
 
     if sel is None:
-        sel = slice(0,halo_field.n_halos+1)
+        sel = slice(0,halo_field.n_halos)
     n_halos = halo_field.halo_masses[sel].size
 
     pt_halos = p21c.PerturbHaloField(
