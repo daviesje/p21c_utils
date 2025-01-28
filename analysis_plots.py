@@ -846,6 +846,8 @@ def lc_seriesplot(lc_list,kinds,zrange,output,names=None,vertical=True):
             rhocrit = (lc.cosmo_params.cosmo.critical_density(0)).to('M_sun Mpc-3').value
             nion_converted = getattr(lc,"n_ion") / rhocrit / lc.cosmo_params.OMb
             setattr(lc,'n_ion',nion_converted)
+        if 'CII_box' in kinds:
+            setattr(lc,'CII_box',make_cii_map(lc)[0])
         for j,kind in enumerate(kinds):
             xyz = getattr(lc,kind)
             logger.info(f" LC {i}: {kind}: MIN {xyz.min():.3e}, MAX {xyz.max():.3e}, MEAN {xyz.mean():.3e}")
@@ -986,7 +988,7 @@ def powerspec_plot(lc_list,output='',names=None,z_out=(11,9,7),kind='brightness_
     save_fig = False
     if axs is None:
         save_fig = True
-        fig,axs = plt.subplots(n_plots,1,figsize=(4,2.5*n_plots),gridspec_kw={'hspace':0.},sharey=True,sharex=True,layout='constrained')
+        fig,axs = plt.subplots(n_plots,1,figsize=(4,2.0*n_plots),gridspec_kw={'hspace':0.},sharey=True,sharex=True,layout='constrained')
         fig.get_layout_engine().set(w_pad=2 / 72, h_pad=2 / 72, hspace=0.0, wspace=0.0)
     
     single_lc = len(lc_list) == 1

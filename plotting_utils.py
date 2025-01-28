@@ -14,7 +14,6 @@ plt.rcParams["font.size"] = 10
 plt.rcParams["xtick.labelsize"] = 8
 plt.rcParams["ytick.labelsize"] = 8
 plt.rcParams["legend.fontsize"] = 8
-# plt.rcParams["text.usetex"] = True
 
 #gets the grid closest to the desired aspect ratio
 #TODO: There's a better way if I'm not lazy
