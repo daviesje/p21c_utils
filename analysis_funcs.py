@@ -414,7 +414,7 @@ def grid_halo_cat(halo_cat,inputs):
     crd = crd / hires * lores
 
     props =  get_props_from_halofield(halo_cat,inputs,kinds=['nion','xray'])
-    logger.info(f'crd {crd.shape} n {props['nion'].shape}')
+    logger.info(f'crd {crd.shape} n {props["nion"].shape}')
     mass_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=masses)
     nion_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=props['nion'])
     xray_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=props['xray'])
@@ -628,7 +628,7 @@ def get_lc_powerspectra(lc_list,z_list,kind='brightness_temp',kind2=None,subtrac
             lc = lcf
         else:
             lc = p21c.LightCone.read(lcf,safe=False)
-        
+
         z_targets = np.zeros_like(z_list)
         for j,(z,zt) in enumerate(zip(z_list,z_type)):
             if zt.lower() == 'redshift':
@@ -674,86 +674,78 @@ def get_lc_powerspectra(lc_list,z_list,kind='brightness_temp',kind2=None,subtrac
         
     return k_arr, power_arr, z_ps
 
-def match_global_function(fields,lc,**kwargs):
-    """
-    Gets the expected global average matching a HaloBox field.
-    """
-    astro_params = lc.astro_params
-    cosmo_params = lc.cosmo_params
-    user_params = lc.user_params
-    flag_options = lc.flag_options
-    redshifts = lc.node_redshifts
-
+def global_integrals(inputs,fields,ave_mturns,ave_mturns_mini,lnMmin,lnMmax):
     s_per_yr = 60*60*24 * 365.25
-    
-    lib.Broadcast_struct_global_all(user_params.cstruct, cosmo_params.cstruct, astro_params.cstruct, flag_options.cstruct)
+
+    ap_c = inputs.astro_params.cdict #since there are some values we need to access directly
+    cp = inputs.cosmo_params
+    up = inputs.user_params
+    fo = inputs.flag_options
+    redshifts = inputs.node_redshifts
+
+    lib.Broadcast_struct_global_all(up.cstruct, cp.cstruct, inputs.astro_params.cstruct, fo.cstruct)
     lib.init_ps()
 
-    if user_params.INTEGRATION_METHOD_ATOMIC == 1 or user_params.INTEGRATION_METHOD_MINI == 1:
-        lib.initialise_GL(kwargs["lnMmin"], kwargs["lnMmax"])
+    if up.INTEGRATION_METHOD_ATOMIC == 1 or up.INTEGRATION_METHOD_MINI == 1:
+        lib.initialise_GL(lnMmin,lnMmax)
 
-    lib.initialiseSigmaMInterpTable(kwargs["Mmin"], kwargs["Mmax"])
-    
-    ave_mturns = 10**lc.log10_mturnovers
-    ave_mturns_mini = 10**lc.log10_mturnovers_mini
+    lib.initialiseSigmaMInterpTable(np.exp(lnMmin), np.exp(lnMmax))
     
     # set the power-law limit masses
-    if astro_params.ALPHA_STAR != 0.0:
-        Mlim_Fstar = 1e10 * (10**astro_params.F_STAR10) ** (-1.0 / astro_params.ALPHA_STAR)
-        Mlim_Fstar_MINI = 1e7 * (10**astro_params.F_STAR7_MINI) ** (-1.0 / astro_params.ALPHA_STAR_MINI)
+    if ap_c['ALPHA_STAR'] != 0.0:
+        Mlim_Fstar = 1e10 * (ap_c['F_STAR10']) ** (-1.0 / ap_c['ALPHA_STAR'])
+        Mlim_Fstar_MINI = 1e7 * (ap_c['F_STAR7_MINI']) ** (-1.0 / ap_c['ALPHA_STAR_MINI'])
     else:
         Mlim_Fstar = 0.0
         Mlim_Fstar_MINI = 0.0
-    if astro_params.ALPHA_ESC != 0.0:
-        Mlim_Fesc = 1e10 * (10**astro_params.F_ESC10) ** (-1.0 / astro_params.ALPHA_ESC)
-        Mlim_Fesc_MINI = 1e7 * (10**astro_params.F_ESC7_MINI) ** (-1.0 / astro_params.ALPHA_ESC)
+    if ap_c['ALPHA_ESC'] != 0.0:
+        Mlim_Fesc = 1e10 * (ap_c['F_ESC10']) ** (-1.0 / ap_c['ALPHA_ESC'])
+        Mlim_Fesc_MINI = 1e7 * (ap_c['F_ESC7_MINI']) ** (-1.0 / ap_c['ALPHA_ESC'])
     else:
         Mlim_Fesc = 0.0
         Mlim_Fesc_MINI = 0.0
         
-    rhocrit = (cosmo_params.cosmo.critical_density(0)).to('M_sun Mpc-3').value
-    hubble = cosmo_params.cosmo.H(redshifts).to('s-1').value
+    rhocrit = (cp.cosmo.critical_density(0)).to('M_sun Mpc-3').value
+    hubble = cp.cosmo.H(redshifts).to('s-1').value
     
     need_fesc_acg = any(field in ("n_ion","F_coll","whalo_sfr","xH_box") for field in fields)
     need_fesc_mcg = any(field in ("n_ion","F_coll_MINI","whalo_sfr","xH_box") for field in fields)
     need_star_acg = any(field in ("halo_xray","halo_stars","halo_sfr") for field in fields)
     need_star_mcg = any(field in ("halo_xray","halo_stars_mini","halo_sfr_mini") for field in fields)
     need_fcoll = any(field in ("halo_mass") for field in fields)
-    need_xray = "halo_xray" in fields and lc.flag_options.USE_HALO_FIELD
-
-    ap_c = astro_params.cdict
+    need_xray = "halo_xray" in fields and fo.USE_HALO_FIELD
 
     if need_fesc_acg:
         fesc_acg_integral = np.vectorize(lib.Nion_General)(
-            redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
+            redshifts,lnMmin,lnMmax,
             ave_mturns,ap_c["ALPHA_STAR"],ap_c["ALPHA_ESC"],
             ap_c["F_STAR10"],ap_c["F_ESC10"],Mlim_Fstar,Mlim_Fesc
         )
     if need_fesc_mcg:
         fesc_mcg_integral = np.vectorize(lib.Nion_General_MINI)(
-            redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
+            redshifts,lnMmin,lnMmax,
             ave_mturns_mini,ave_mturns,ap_c["ALPHA_STAR_MINI"],ap_c["ALPHA_ESC"],
             ap_c["F_STAR7_MINI"],ap_c["F_ESC7_MINI"],
             Mlim_Fstar_MINI,Mlim_Fesc_MINI
         )
     if need_star_acg:
         star_acg_integral = np.vectorize(lib.Nion_General)(
-            redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
+            redshifts,lnMmin,lnMmax,
             ave_mturns,ap_c["ALPHA_STAR"],0.,
             ap_c["F_STAR10"],1.,Mlim_Fstar,0.
         )
     if need_star_mcg:
         star_mcg_integral = np.vectorize(lib.Nion_General_MINI)(
-            redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
+            redshifts,lnMmin,lnMmax,
             ave_mturns_mini,ave_mturns,ap_c["ALPHA_STAR_MINI"],0.,
             ap_c["F_STAR7_MINI"],0.,
             Mlim_Fstar_MINI,0.
         )
     if need_fcoll:
-        fcoll_integral = np.vectorize(lib.Fcoll_General)(redshifts,kwargs['lnMmin'],kwargs['lnMmax'])
+        fcoll_integral = np.vectorize(lib.Fcoll_General)(redshifts,lnMmin,lnMmax)
     if need_xray:
         xray_integral = np.vectorize(lib.Xray_General)(
-            redshifts,kwargs['lnMmin'],kwargs['lnMmax'],
+            redshifts,lnMmin,lnMmax,
             ave_mturns_mini,ave_mturns,ap_c['ALPHA_STAR'],
             ap_c['ALPHA_STAR_MINI'],ap_c["F_STAR10"],ap_c["F_STAR7_MINI"],
             ap_c['L_X'],ap_c['L_X_MINI'],1/hubble,ap_c['t_STAR'],
@@ -763,33 +755,33 @@ def match_global_function(fields,lc,**kwargs):
     results = []
     for field in fields:
         if field == 'halo_mass':
-            result = fcoll_integral * cosmo_params.OMm * rhocrit
+            result = fcoll_integral * cp.OMm * rhocrit
         elif field == 'halo_stars':
-            result = star_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"]
+            result = star_acg_integral * cp.OMb * rhocrit * ap_c["F_STAR10"]
         elif field == 'halo_stars_mini':
-            result = star_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"]
+            result = star_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"]
         elif field == 'halo_sfr':
-            result = star_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"] * hubble / ap_c["t_STAR"]
+            result = star_acg_integral * cp.OMb * rhocrit * ap_c["F_STAR10"] * hubble / ap_c["t_STAR"]
         elif field == 'halo_sfr_mini':
-            result = star_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * hubble / ap_c["t_STAR"]
+            result = star_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"] * hubble / ap_c["t_STAR"]
         elif field == 'n_ion':
-            result = fesc_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"] * p21c.global_params.Pop2_ion * ap_c["F_ESC10"]
-            if flag_options.USE_MINI_HALOS:
-                result += fesc_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * p21c.global_params.Pop3_ion
+            result = fesc_acg_integral * cp.OMb * rhocrit * ap_c["F_STAR10"] * p21c.global_params.Pop2_ion * ap_c["F_ESC10"]
+            if fo.USE_MINI_HALOS:
+                result += fesc_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * p21c.global_params.Pop3_ion
         elif field == 'whalo_sfr':
-            result = fesc_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["F_ESC10"] * hubble / ap_c["t_STAR"] * p21c.global_params.Pop2_ion
-            if flag_options.USE_MINI_HALOS:
-                result += fesc_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * hubble / ap_c["t_STAR"] * p21c.global_params.Pop3_ion
+            result = fesc_acg_integral * cp.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["F_ESC10"] * hubble / ap_c["t_STAR"] * p21c.global_params.Pop2_ion
+            if fo.USE_MINI_HALOS:
+                result += fesc_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * hubble / ap_c["t_STAR"] * p21c.global_params.Pop3_ion
         elif field == 'halo_xray':
-            if lc.flag_options.USE_HALO_FIELD:
-                result = star_acg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["L_X"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
-                if flag_options.USE_MINI_HALOS:
-                    result += star_mcg_integral * cosmo_params.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["L_X_MINI"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
+            if lc.fo.USE_HALO_FIELD:
+                result = star_acg_integral * cp.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["L_X"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
+                if fo.USE_MINI_HALOS:
+                    result += star_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["L_X_MINI"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
             else:
-                result = xray_integral * cosmo_params.OMm * rhocrit * 1e-38
+                result = xray_integral * cp.OMm * rhocrit * 1e-38
         elif field == 'xH_box':
             result = fesc_acg_integral * ap_c["F_STAR10"] * p21c.global_params.Pop2_ion * ap_c["F_ESC10"]
-            if flag_options.USE_MINI_HALOS:
+            if fo.USE_MINI_HALOS:
                 result += fesc_mcg_integral * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * p21c.global_params.Pop3_ion
         elif field == 'Fcoll':
             result = fesc_acg_integral
@@ -801,3 +793,24 @@ def match_global_function(fields,lc,**kwargs):
         results += [result]
     
     return np.array(results)
+
+def match_global_function(fields,lc,lnMmin,lnMmax):
+    """
+    Gets the expected global average matching a HaloBox field.
+
+    uses the lightcone object to get the necessary parameters
+    """
+
+    inputs = p21c.InputParameters(
+        astro_params = lc.astro_params,
+        cosmo_params = lc.cosmo_params,
+        user_params = lc.user_params,
+        flag_options = lc.flag_options,
+        redshifts = lc.node_redshifts,
+        random_seed = lc.random_seed,
+    )
+    
+    ave_mturns = 10**lc.log10_mturnovers
+    ave_mturns_mini = 10**lc.log10_mturnovers_mini
+
+    return global_integrals(inputs,fields,ave_mturns,ave_mturns_mini,lnMmin,lnMmax)

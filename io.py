@@ -90,6 +90,17 @@ def read_astrid(cosmo,fname,z):
 
     return df
 
+def parse_lc_list(lc_list):
+    lightcones = []
+    for lc in lc_list:
+        if isinstance(lc,str): 
+            lc = p21c.LightCone.read(lc,safe=False)
+        if not isinstance(lc,p21c.LightCone):
+            raise ValueError("lc list must be either py21cmfast.LightCone or string")
+        lightcones.append(lc)
+
+    return lightcones
+
 
 
 ##COMPATIBILITY WITH OLD (BEFORE LIGHTCONER) OUTPUTS

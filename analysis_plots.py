@@ -9,12 +9,13 @@ from scipy.stats import binned_statistic_2d
 from matplotlib import pyplot as plt
 from matplotlib.colors import Normalize,LogNorm
 from matplotlib import gridspec
+from matplotlib.lines import Line2D
 
 from .plotting_utils import plot_specs as pspecs, fix_ticks, register_eor_cmaps, find_pspec, grid_by_aspect
 from .analysis_funcs import match_global_function, get_lc_powerspectra, get_props_from_halofield
 from .postprocessing import xray_bg, xray_xps, cii_xps, make_cii_map, gal_xps, make_gal_lc, make_cii_coev
 from .spec_conversions import sfr_to_Muv
-from .io import find_closest_box, read_cv_ignoreparams, read_lc_ignoreparams
+from .io import find_closest_box, read_cv_ignoreparams, read_lc_ignoreparams, parse_lc_list
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -69,9 +70,9 @@ def uv_lf_ax(hf_ax,names,ax,pth=True):
     muv_wid = Muvbins[1:] - Muvbins[:-1]
     #get the theoretical UVLF from the inputs of the first halofield in the group
     if pth:
-        hf_example = p21c.PerturbHaloField.from_file(hf_ax[0],arrays_to_load=())
+        hf_example = p21c.PerturbHaloField.from_file(hf_ax[0],arrays_to_load=(),safe=False)
     else:
-        hf_example = p21c.HaloField.from_file(hf_ax[0],arrays_to_load=())
+        hf_example = p21c.HaloField.from_file(hf_ax[0],arrays_to_load=(),safe=False)
 
     # Muvbins_inp,_,uvlf_from_inputs = p21c.compute_luminosity_function(redshifts=[hf_example.redshift,],
     #                                                     user_params=hf_example.user_params,
@@ -88,10 +89,18 @@ def uv_lf_ax(hf_ax,names,ax,pth=True):
     ax.set_ylim(one_halo[-1]/2,one_halo[0]*1e6)
     for j,hffile in enumerate(hf_ax):
         if pth:
-            hf = p21c.PerturbHaloField.from_file(hffile,arrays_to_load=None)
+            hf = p21c.PerturbHaloField.from_file(hffile,arrays_to_load=None,safe=False)
         else:
-            hf = p21c.HaloField.from_file(hffile,arrays_to_load=None)
-        sfr, = get_props_from_halofield(hf)
+            hf = p21c.HaloField.from_file(hffile,arrays_to_load=None,safe=False)
+        inputs = p21c.InputParameters(
+            user_params=hf.user_params,
+            cosmo_params=hf.cosmo_params,
+            astro_params=hf.astro_params,
+            flag_options=hf.flag_options,
+            random_seed=hf.random_seed,
+        )
+        buf = get_props_from_halofield(hf,inputs=inputs)
+        sfr = buf['sfr'] + buf['sfr_mini'] if inputs.flag_options.USE_MINI_HALOS else buf['sfr']
         
         muv = sfr_to_Muv(sfr)
         uvlf,_ = np.histogram(muv,Muvbins)
@@ -746,7 +755,13 @@ def plot_xray_xps(lcfile):
     fig.savefig('./plots/xray_xcorr.png')
 
 def global_seriesplot(lc_list,kinds,zmax,names,output):
-    lightcones = [p21c.LightCone.read(lcf,safe=False) for lcf in lc_list]
+    lightcones = []
+    for lc in lc_list:
+        if isinstance(lc,str): 
+            lc = p21c.LightCone.read(lc,safe=False)
+        if not isinstance(lc,p21c.LightCone):
+            raise ValueError("lc list must be either py21cmfast.LightCone or string")
+        lightcones.append(lc)
     register_eor_cmaps()
     
     #GLOBAL QUANTITY PLOTTING
@@ -773,41 +788,61 @@ def global_seriesplot(lc_list,kinds,zmax,names,output):
     if names:
         axs[0].legend(fontsize=6)
     fig.savefig(output)
+    return fig,axs
 
-def photoncons_plot(lc_list,output):
-    lightcones = [p21c.LightCone.read(lcf,safe=False) for lcf in lc_list]
+def photoncons_plot(lc_list,output,names):
+    lightcones = parse_lc_list(lc_list)
     #GLOBAL QUANTITY PLOTTING
-    fig, axs = plt.subplots(2,1,figsize=(12,10))
+    fig, axs = plt.subplots(2, 1,
+                            figsize=(12,10),
+                            layout='constrained')
+    fig.get_layout_engine().set(w_pad=0 / 72, h_pad=2 / 72, hspace=0.0,
+                            wspace=0.0)
 
     for i,lc in enumerate(lightcones):
-        label = lc_list[i].split('lightcone_')[-1].split('.')[0]
         pcd = lc.photon_nonconservation_data
-        # print(f'--------{label}--------')
-        # print(pcd)
-        # print('------------------------')
+        if pcd is not None:
+            axs[0].plot(pcd['z_analytic'],1-pcd['Q_analytic'],color=f'C{i:d}',linestyle='--')
+            axs[0].plot(pcd['z_calibration'],pcd['nf_calibration'],color=f'C{i:d}',linestyle=':')
 
-        try:
-            ax = axs[0]
-            _, ax = p21c.plotting.plot_global_history(lc,kind='xH_box',ylog=False,color=f'C{i:d}',ax=ax,label=label)
-            ax.set_xlim(6,12)
-            if "CONS" in label:
-                ax.plot(pcd['z_analytic'],1-pcd['Q_analytic'],label='analtyic '+label,color=f'C{i:d}',linestyle='--')
-                ax.plot(pcd['z_calibration'],pcd['nf_calibration'],label='calibration '+label,color=f'C{i:d}',linestyle=':')
-            ax.legend(fontsize=6)
-
-            ax = axs[1]
-            if "CONS" in label:
-                ax.plot(pcd['nf_photoncons'],pcd['delta_z_photon_cons'],label='pc '+label,color=f'C{i:d}',linestyle='-')
+            if 'delta_z_photon_cons' in pcd.keys():
+                axs[1].plot(pcd['nf_photoncons'],pcd['delta_z_photon_cons'],label='pc ',color=f'C{i:d}',linestyle='-')
                 z_interp_calib = np.interp(pcd['nf_photoncons'],pcd['nf_calibration'],pcd['z_calibration'])
                 z_interp_analy = np.interp(pcd['nf_photoncons'],1-pcd['Q_analytic'],pcd['z_analytic'])
-                print(z_interp_analy)
-                print(z_interp_calib)
-                ax.plot(pcd['nf_photoncons'],z_interp_analy-z_interp_calib,label='a-c '+label,color=f'C{i:d}',linestyle=':')
-            ax.legend(fontsize=6)
-        except AssertionError:
-            pass
-            
-    fig.tight_layout()
+                axs[1].plot(pcd['nf_photoncons'],z_interp_analy-z_interp_calib,color=f'C{i:d}',linestyle='--')
+            elif 'fesc_target' in pcd.keys():
+                axs[1].plot(pcd['nf_photoncons'],pcd['fesc_target'],color=f'C{i:d}',linestyle=':')
+                axs[1].plot(pcd['nf_photoncons'],np.full_like(pcd['nf_photoncons'],lc.astro_params.cdict['F_ESC10']),color=f'C{i:d}',linestyle='--')
+                axs[1].plot(pcd['nf_photoncons'],pcd['fit_yint'] + pcd['fit_slope']*(1-pcd['nf_photoncons']),color=f'C{i:d}',linestyle='-')
+            elif 'alpha_ratio' in pcd.keys():
+                axs[1].plot(pcd['nf_photoncons'],pcd['alpha_ratio'],color=f'C{i:d}',linestyle=':')
+                axs[1].plot(pcd['nf_photoncons'],np.full_like(pcd['nf_photoncons'],lc.astro_params.cdict['ALPHA_ESC']),color=f'C{i:d}',linestyle='--')
+                axs[1].plot(pcd['nf_photoncons'],pcd['fit_yint'] + pcd['fit_slope']*(1-pcd['nf_photoncons']),color=f'C{i:d}',linestyle='-')
+
+        p21c.plotting.plot_global_history(lc,kind='xH_box',ylog=False,color=f'C{i:d}',ax=axs[0])
+    axs[0].set_xlim(5,12)
+    axs[0].set_ylim(0,1)
+    axs[0].grid()
+    axs[1].grid()
+
+    legend_elements_lc = [Line2D([0], [0], color=f'C{i:d}', linestyle='-', label=names[i]) for i in range(len(lc_list))]
+    legend_elements_type = [
+        Line2D([0], [0], color='k', linestyle='-', label='Simulation'),
+        Line2D([0], [0], color='k', linestyle='--', label='Analytic'),
+        Line2D([0], [0], color='k', linestyle=':', label='Calibration'),
+    ]
+    legend_elements_type2 = [
+        Line2D([0], [0], color='k', linestyle=':', label='Raw'),
+        Line2D([0], [0], color='k', linestyle='--', label='Original'),
+        Line2D([0], [0], color='k', linestyle='-', label='Used in Sim.'),
+    ]
+    axs[0].legend(handles=legend_elements_lc+legend_elements_type,fontsize=8)
+    axs[1].legend(handles=legend_elements_type2,fontsize=8)
+    axs[0].set_xlabel('redshift')
+    axs[1].set_xlabel('Neutral Fraction')
+    axs[1].set_ylabel('Correction factor (dz, f_esc10, alpha_esc)')
+    axs[0].set_ylabel('xH')
+
     fig.savefig(output)
 
 def lc_seriesplot(lc_list,kinds,zrange,output,names=None,vertical=True):
@@ -982,16 +1017,27 @@ def powerspec_plot(lc_list,output='',names=None,z_out=(11,9,7),kind='brightness_
     if isinstance(z_type,str):
         z_type = [z_type,]*z_out.size
 
-    k_arr, power_arr, z_ps = get_lc_powerspectra(lc_list,z_out,kind,kind2=kind2,n_psbins=n_psbins,z_type=z_type)
+    lightcones = []
+    for lc in lc_list:
+        if isinstance(lc,str): 
+            lc = p21c.LightCone.read(lc,safe=False)
+        if not isinstance(lc,p21c.LightCone):
+            raise ValueError("lc list must be either py21cmfast.LightCone or string")
+        if 'CII_box' in (kind,kind2):
+            setattr(lc,'CII_box',make_cii_map(lc)[0])
+        lightcones.append(lc)
+
+    k_arr, power_arr, z_ps = get_lc_powerspectra(lightcones,z_out,kind,kind2=kind2,n_psbins=n_psbins,z_type=z_type)
 
     n_plots = z_ps.shape[1] if subplot_z else len(lc_list)
     save_fig = False
     if axs is None:
         save_fig = True
-        fig,axs = plt.subplots(n_plots,1,figsize=(4,2.0*n_plots),gridspec_kw={'hspace':0.},sharey=True,sharex=True,layout='constrained')
+        fig,axs = plt.subplots(n_plots,1,figsize=(5,3*n_plots),gridspec_kw={'hspace':0.},sharey=True,sharex=True,layout='constrained')
         fig.get_layout_engine().set(w_pad=2 / 72, h_pad=2 / 72, hspace=0.0, wspace=0.0)
     
-    single_lc = len(lc_list) == 1
+    if not hasattr(axs,'__len__'):
+        axs = [axs,]
 
     #setup default labels
     if z_lab is None:
