@@ -670,7 +670,7 @@ def get_lc_powerspectra(lc_list,z_list,kind='brightness_temp',kind2=None,subtrac
 
         k, power, z_ps[i,...] = compute_power_lc(lc,z_targets,kind=kind+'_ps',kind2=kind2+'_ps' if kind2 is not None else None,n_psbins=n_psbins)
         k_arr[i,...] = k
-        power_arr[i,...] = power * k**3 / (2*np.pi) #dimensionless?
+        power_arr[i,...] = power * k**3 / (2*np.pi**2) #dimensionless?
         
     return k_arr, power_arr, z_ps
 

@@ -176,16 +176,15 @@ def make_cii_map(lc):
 
     sfr = (lc.user_params.BOX_LEN/lc.user_params.HII_DIM)**3 * lc.halo_sfr * U.Unit('M_sun s-1')
     #De Looze 2014
-    L_conversion = 10**7.06 * U.Unit('solLum M_sun-1 s')
+    L_conversion = 10**7.06 * U.Unit('solLum M_sun-1 yr')
     L = sfr * L_conversion
     
     d_lum = lc.cosmo_params.cosmo.luminosity_distance(z_lc)
     mu = 1 #no magnification
 
     #EQ 3 Bethermin+ 2022
-    #the strange unit conversion is from the constants, TODO: make it properly
-    I_conversion = mu / 1.04e-3 * U.Unit('Jy km s-1 Mpc2 GHz-1 solLum-1')
-    I = I_conversion / d_lum**2 * nu_lc * L
+    I_conversion = mu /(1.04e-3 * U.Unit('Mpc-2 GHz-1') * nu_lc * d_lum**2) * U.Unit('Jy km s-1 solLum-1')
+    I = I_conversion * L
 
     #angular size of a cell
     d_a = lc.cosmo_params.cosmo.angular_diameter_distance(z_lc)

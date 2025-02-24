@@ -171,7 +171,7 @@ def gal_colocation_plot(coev_list,halofield_list,names,outname,cv_kinds=None,hf_
         if 'CII_box' == cvk:
             setattr(coev,"CII_box",make_cii_coev(coev))
 
-        halofield = p21c.PerturbHaloField.from_file(halofieldf,arrays_to_load=None)
+        halofield = p21c.PerturbHaloField.from_file(halofieldf,arrays_to_load=None,safe=False)
 
         slmin = slice_index - ((slice_width-1)//2)
         slmax = slice_index + (slice_width//2 + 1)
@@ -192,7 +192,7 @@ def gal_colocation_plot(coev_list,halofield_list,names,outname,cv_kinds=None,hf_
         #NOTE: does not show slice width yet
         p21c.plotting.coeval_sliceplot(coev,cmap=spec['cmap'],kind=cvk,fig=fig,ax=axs[i],aspect='equal',cbar=False
                                                     ,log=spec['lognorm'],cbar_label=spec['clabel'],vmin=spec['vmin']
-                                                    ,vmax=spec['vmax'],slice_index=slice_index)
+                                                    ,vmax=spec['vmax'],slice_index=slice_index,interpolation='none')
         
         #select largest N halos
         if hfk == "Muv":
@@ -925,8 +925,9 @@ def coev_seriesplot(coev_list,kinds,output,slice_idx=0):
         axs[0,i].set_title(coev_list[i].split('coeval_')[-1].split('.')[0],fontsize=8)
         for j,kind in enumerate(kinds):
             spec = pspecs[kind]
-            fig, ax = p21c.plotting.coeval_sliceplot(cv,cmap=spec['cmap'],kind=kind,fig=fig,ax=axs[j,i],aspect='equal',cbar=cb_indiv
-                                                        ,log=spec['lognorm'],cbar_label=spec['clabel'],vmin=spec['vmin'],vmax=spec['vmax'],slice_index=slice_idx)
+            fig, ax = p21c.plotting.coeval_sliceplot(cv,cmap=spec['cmap'],kind=kind,fig=fig,ax=axs[j,i],aspect='equal',cbar=cb_indiv,
+                                                        log=spec['lognorm'],cbar_label=spec['clabel'],vmin=spec['vmin'],vmax=spec['vmax'],
+                                                        slice_index=slice_idx,interpolation='none')
 
     if not cb_indiv:
         cb = plt.colorbar(ax.get_images()[0],ax=fig.get_axes(),aspect=10*num_plots,
