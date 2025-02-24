@@ -146,6 +146,15 @@ def get_props_from_halofield(halo_field,inputs,sel=None,kinds=['sfr',]):
     #fake pt_halos
     zero_array = ffi.cast("float *", np.zeros(halo_field.user_params.HII_DIM**3,dtype='f4').ctypes.data)
 
+    if inputs is None:
+        #we don't use the node redshifts here so it's fine to have default
+        inputs = p21c.InputParameters(
+            user_params=halo_field.user_params,
+            cosmo_params=halo_field.cosmo_params,
+            astro_params=halo_field.astro_params,
+            flag_options=halo_field.flag_options,
+            random_seed=halo_field.random_seed,
+        )
     if sel is None:
         sel = slice(0,halo_field.n_halos)
     n_halos = halo_field.halo_masses[sel].size

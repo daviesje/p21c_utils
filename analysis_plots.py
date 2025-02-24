@@ -21,25 +21,29 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def summary_plot(lc_file,hf_file,outname):
-    fig,axs = plt.subplots(2,2,figsize=(8,8),layout="constrained",squeeze=False)
+def summary_plot(lc_file,hf_file,outname=None):
+    fig,axs = plt.subplots(2,2,figsize=(5,4),layout="constrained",squeeze=False)
     axs = axs.flatten()
     fig.get_layout_engine().set(w_pad=2 / 72, h_pad=2 / 72, hspace=0.0,
                                 wspace=0.0)
     
     #UVLF PLOT
     uv_lf_ax([hf_file,],['',],axs[0])
-    axs[0].text(0.05,0.95,r'$z=8$',transform=axs[0].transAxes,verticalalignment='top',horizontalalignment='left',
+    axs[0].text(0.05,0.95,'UVLF',transform=axs[0].transAxes,verticalalignment='top',horizontalalignment='left',
                             bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
 
     lc = p21c.LightCone.read(lc_file,safe=False)
     setattr(lc,"CII_Box",make_cii_map(lc)[0])
 
     #21cm PS FIXED Z
-    powerspec_plot([lc,],None,None,z_out=(0.5,),z_type='XHI',axs=[axs[1],])
+    powerspec_plot([lc,],output=None,names=[r''],z_out=(0.5,),z_type='XHI',axs=[axs[1],])
+    axs[1].text(0.05,0.95,r'$\Delta_{21} (k,z=8)$',transform=axs[1].transAxes,verticalalignment='top',horizontalalignment='left',
+                            bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
     
     #21cm PS FIXED K
-    largescale_powerplot([lc,],None,None,k_target=(0.1,),axs=[axs[2],])
+    largescale_powerplot([lc,],output=None,names=[r''],k_target=(0.1,),axs=[axs[2],])
+    axs[2].text(0.05,0.95,r'$\Delta_{21} (z,k=0.1)$',transform=axs[2].transAxes,verticalalignment='top',horizontalalignment='left',
+                            bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
 
     #CII X PLOT
     k_arr, power_arr, z_ps = get_lc_powerspectra([lc,],z_list=[12,],kind='brightness_temp',kind2='CII_Box',
@@ -53,10 +57,11 @@ def summary_plot(lc_file,hf_file,outname):
     axs[3].set_yscale('symlog',linthresh=2e-1)
     axs[3].set_xscale('log')
     axs[3].grid()
-
-    fix_ticks(fig,sharex=False,sharey=False)
-
-    fig.savefig(outname)
+    axs[3].text(0.05,0.95,'21cm X CII Cross',transform=axs[3].transAxes,verticalalignment='top',horizontalalignment='left',
+                            bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
+    if outname:
+        fig.savefig(outname)
+    return fig, axs
 
 def uv_lf_ax(hf_ax,names,ax,pth=True):
     ax.set_xlim([-15,-24.5])
@@ -148,14 +153,16 @@ def uv_lf_plot(halofield_list,names,titles,outname,pth=True):
 def gal_colocation_plot(coev_list,halofield_list,names,outname,cv_kinds=None,hf_kinds=None,n_largest=300,slice_index=0,slice_width=1):
     register_eor_cmaps()
     nrows,ncols = grid_by_aspect(len(coev_list),aspect=4.1)
+    
+    # fig,axs = plt.subplots(nrows,ncols,figsize=(8,8*nrows/ncols),sharex=True,sharey=True)
     fig,axs = plt.subplots(nrows,ncols,figsize=(8,8*nrows/ncols),layout='constrained',sharex=True,sharey=True)
-    fig.get_layout_engine().set(w_pad=0 / 72, h_pad=0 / 72, hspace=0.0, wspace=0.0)
+    fig.get_layout_engine().set(w_pad=2 / 72, h_pad=2 / 72, hspace=0.0, wspace=0.0)
     axs = axs.flatten()
 
     if cv_kinds is None:
         cv_kinds = 'brightness_temp'
     if hf_kinds is None:
-        hf_kinds = 'halo_masses'
+        hf_kinds = 'mass'
     
     one_cv = False
     if isinstance(cv_kinds,str):
@@ -182,10 +189,11 @@ def gal_colocation_plot(coev_list,halofield_list,names,outname,cv_kinds=None,hf_
         hf_pos_sel = (halofield.halo_coords[:,2] >= slmin) & (halofield.halo_coords[:,2] < slmax)
 
         if 'Muv' == hfk:
-            sfr, = get_props_from_halofield(halofield,None,None,sel=hf_pos_sel,kinds=['sfr'])
-            hf_prop = sfr_to_Muv(sfr)
+            buf = get_props_from_halofield(halofield,inputs=None,sel=hf_pos_sel,kinds=['sfr'])['sfr']
+            hf_prop = sfr_to_Muv(buf)
         else:
-            hf_prop, = get_props_from_halofield(halofield,None,None,sel=hf_pos_sel,kinds=[hfk,])
+            hf_prop = get_props_from_halofield(halofield,inputs=None,sel=hf_pos_sel,kinds=[hfk,])[hfk]
+
         hf_pos = halofield.halo_coords[hf_pos_sel,:] * coev.user_params.BOX_LEN / coev.user_params.HII_DIM
         
         spec = find_pspec(cvk,coev)
@@ -195,28 +203,32 @@ def gal_colocation_plot(coev_list,halofield_list,names,outname,cv_kinds=None,hf_
                                                     ,vmax=spec['vmax'],slice_index=slice_index,interpolation='none')
         
         #select largest N halos
-        if hfk == "Muv":
-            #points and labels will be overwritten by the same thing
-            points = []
-            sel_bins = np.array([-18,-20,-22,-24],dtype=int)
-            marker_list = ['o','s','v','X']
-            labels = [rf'$M_{{uv}} \in [{{{sel_bins[j]}}},{{{sel_bins[j+1]}}}]$' for j in range(sel_bins.size-1)]
-            for j in range(len(sel_bins) - 1):
-                sel = (hf_prop < sel_bins[j]) & (hf_prop > sel_bins[j+1])
-                p = axs[i].scatter(hf_pos[sel,0],hf_pos[sel,1],marker=marker_list[j],c='none',edgecolors='xkcd:neon green',
-                               linewidths=0.7,s=10)
-                points.append(p)
-        else:
-            k_part = hf_prop.size - n_largest - 1
-            hf_lim_sel = np.argpartition(hf_prop,k_part)[k_part:]
-            hf_prop = hf_prop[hf_lim_sel]
-            hf_pos = hf_pos[hf_lim_sel,:]
+        marker_color = 'red' if all(cv_kinds) == 'brightness_temp' else 'xkcd:neon green'
+        # if hfk == "Muv":
+        #     #points and labels will be overwritten by the same thing
+        #     points = []
+        #     sel_bins = np.array([-19,-20,-21,-22,-23],dtype=int)
+        #     marker_list = ['v','o','s','X']
+        #     labels = [rf'$M_{{uv}} \in [{{{sel_bins[j]}}},{{{sel_bins[j+1]}}}]$' for j in range(sel_bins.size-1)]
+        #     for j in range(len(sel_bins) - 1):
+        #         sel = (hf_prop < sel_bins[j]) & (hf_prop > sel_bins[j+1])
+        #         p = axs[i].scatter(hf_pos[sel,0],hf_pos[sel,1],marker=marker_list[j],c='none',edgecolors=marker_color,
+        #                        linewidths=0.7,s=4+j*8)
+        #         points.append(p)
+        # else:
+        #lowest value
+        prop_part = -hf_prop if hfk in("Muv",) else hf_prop
 
-            msize_max = 20
-            msize_min = 1
-            msize_p = np.log10(hf_prop/hf_prop.min())/np.log10(hf_prop.max()/hf_prop.min())
-            gal_marker_size = msize_min + (msize_max - msize_min)*msize_p
-            axs[i].scatter(hf_pos[:,0],hf_pos[:,1],c='none',edgecolors='xkcd:neon green',linewidths=0.7,s=gal_marker_size)
+        k_part = hf_prop.size - n_largest - 1
+        hf_lim_sel = np.argpartition(prop_part,k_part)[k_part:]
+        prop_part = prop_part[hf_lim_sel]
+        hf_pos = hf_pos[hf_lim_sel,:]
+
+        msize_max = 20
+        msize_min = 1
+        msize_p = np.log10(prop_part/prop_part.min())/np.log10(prop_part.max()/prop_part.min())
+        gal_marker_size = msize_min + (msize_max - msize_min)*msize_p
+        axs[i].scatter(hf_pos[:,0],hf_pos[:,1],c='none',edgecolors=marker_color,linewidths=0.7,s=gal_marker_size)
             
         axs[i].text(0.05,0.95,names[i],transform=axs[i].transAxes,verticalalignment='top',horizontalalignment='left',
                         bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
@@ -225,14 +237,15 @@ def gal_colocation_plot(coev_list,halofield_list,names,outname,cv_kinds=None,hf_
     if one_cv:
         cb = plt.colorbar(axs[0].get_images()[0],ax=axs)
         cb.ax.set_xlabel(spec['clabel'],fontsize=8)
-    if 'Muv' in hf_kinds:
-        fig.legend(points,labels,loc='upper center', bbox_to_anchor=(0.5,0.98), ncol=sel_bins.size-1, fancybox=True)
+    # if 'Muv' in hf_kinds:
+    #     fig.legend(points,labels,loc='outside upper center', ncol=sel_bins.size-1,facecolor=(1.0,0.9,0.9,1.0))
     fig.savefig(outname)
+    return fig,axs
 
-def full_cross_plot(lc_list,names=('lc1','lc2'),z_out=12.,kind='brightness_temp',kind2='CII_box',n_psbins=20,outname=None,vertical=False):
+def full_cross_plot(lc_list,names=('lc1','lc2'),z_out=12.,z_type='redshift',kind='brightness_temp',kind2='CII_box',n_psbins=20,outname=None,vertical=False):
     ncols = 1 if vertical else 3
     nrows = 3 if vertical else 1
-    plot_dims = (4,8) if vertical else (8,2.5)
+    plot_dims = (3,6) if vertical else (8,2.5)
     fig,axs = plt.subplots(nrows,ncols,figsize=plot_dims,layout='constrained',sharex=True)
     fig.get_layout_engine().set(w_pad=3 / 72, h_pad=3 / 72, hspace=0.0, wspace=0.0)
 
@@ -240,33 +253,35 @@ def full_cross_plot(lc_list,names=('lc1','lc2'),z_out=12.,kind='brightness_temp'
     z_out = np.array([z_out,])
     k_arr, power_arr, z_ps = get_lc_powerspectra(lc_list,z_list=z_out,kind=kind,
                                                 subtract_mean=[False,False],divide_mean=[False,False],
-                                                n_psbins=n_psbins,z_type='redshift')
+                                                n_psbins=n_psbins,z_type=z_type)
     for j in range(len(lc_list)):
         axs[0].set_xlim(k_arr[0,:,1:].min(),k_arr.max())
         axs[0].set_ylabel(r'$\Delta_{21} \overline{dT}_{b,21} (mK^2)$')
         axs[0].set_xlabel(r'$k (\mathrm{Mpc}^{-1})$')
         axs[0].loglog(k_arr[j,0,:],power_arr[j,0,:],label=names[j])
         axs[0].grid()
-        axs[0].text(0.05,0.95,f'z={z_ps[0,0]:.1f}',transform=axs[0].transAxes,verticalalignment='top',horizontalalignment='left',
+        # axs[0].text(0.05,0.95,f'z={z_ps[0,0]:.1f}',transform=axs[0].transAxes,verticalalignment='top',horizontalalignment='left',
+        #                 bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
+        axs[0].text(0.05,0.95,r'$Q=0.5$',transform=axs[0].transAxes,verticalalignment='top',horizontalalignment='left',
                         bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
-        if names:
-            axs[0].legend(loc='lower right')
 
     #auto 2
     k_arr, power_arr, z_ps = get_lc_powerspectra(lc_list,z_list=z_out,kind=kind2,
                                                 subtract_mean=[True,True],divide_mean=[True,True],
-                                                n_psbins=n_psbins,z_type='redshift')
+                                                n_psbins=n_psbins,z_type=z_type)
     for j in range(len(lc_list)):
         axs[1].set_xlim(k_arr[0,:,1:].min(),k_arr.max())
         axs[1].set_ylabel(r'$\Delta_{CII}$')
         axs[1].set_xlabel(r'$k (\mathrm{Mpc}^{-1})$')
         axs[1].loglog(k_arr[j,0,:],power_arr[j,0,:],label=names[j])
         axs[1].grid()
+        if names:
+            axs[1].legend()
 
     #cross
     k_arr, power_arr, z_ps = get_lc_powerspectra(lc_list,z_list=z_out,kind=kind,kind2=kind2,
                                                 subtract_mean=[False,True],divide_mean=[False,True],
-                                                n_psbins=n_psbins,z_type='redshift')
+                                                n_psbins=n_psbins,z_type=z_type)
     for j in range(len(lc_list)):
         axs[2].set_xlim(k_arr[0,:,1:].min(),k_arr.max())
         axs[2].set_ylabel(r'$\left< \delta T_{b,21} \delta_{CII} \right> \frac{k^3}{2\pi}$ (mK)')
@@ -279,7 +294,9 @@ def full_cross_plot(lc_list,names=('lc1','lc2'),z_out=12.,kind='brightness_temp'
 
     fix_ticks(fig,sharex=True,sharey=False)
 
-    fig.savefig(outname)
+    if outname:
+        fig.savefig(outname)
+    return fig,axs
     
 
 
@@ -863,7 +880,7 @@ def lc_seriesplot(lc_list,kinds,zrange,output,names=None,vertical=True):
     num_plots = len(lc_list) * len(kinds)
     nrows = 1 if vertical else num_plots
     ncols = 1 if not vertical else num_plots
-    plot_dims = [8,8*(z_len+1)/getattr(lightcones[-1], kinds[0]).shape[1]/num_plots]
+    plot_dims = [8,5*(z_len+1)/getattr(lightcones[-1], kinds[0]).shape[1]/num_plots]
     plot_dims = plot_dims[::-1] if not vertical else plot_dims
                             
     fig, axs = plt.subplots(nrows, ncols,
@@ -889,15 +906,15 @@ def lc_seriesplot(lc_list,kinds,zrange,output,names=None,vertical=True):
             spec = find_pspec(kind,lc)
             ax_idx = j+i*len(kinds)
             fig, ax = p21c.plotting.lightcone_sliceplot(lc,cmap=spec['cmap'],kind=kind,fig=fig,ax=axs[ax_idx],
-                                                        zticks='redshift',aspect='equal',cbar=cb_indiv,
+                                                        zticks='redshift',cbar=cb_indiv,
                                                         log=spec['lognorm'],cbar_label=spec['clabel'],vertical=vertical,
-                                                        cbar_horizontal=vertical,vmin=spec['vmin'],vmax=spec['vmax'],z_range=zrange)
+                                                        cbar_horizontal=vertical,vmin=spec['vmin'],vmax=spec['vmax'],z_range=zrange,
+                                                        aspect='auto')
             if names:
                 axs[ax_idx].text(0.05,0.99,names[i],transform=axs[ax_idx].transAxes,verticalalignment='top',horizontalalignment='left',
                         bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'),fontsize=8.)
 
     fix_ticks(fig,sharex=True,sharey=True)
-
     if not cb_indiv:
         cb = plt.colorbar(ax.get_images()[0],ax=fig.get_axes(),aspect=10*num_plots,
                      fraction=0.01*num_plots,pad=0.05,orientation='horizontal')
@@ -988,7 +1005,7 @@ def largescale_powerplot(lc_list,output='',names=None,k_target=(0.1,),z_max=16,k
         ax.set_ylabel(r'$\Delta_{21} \overline{dT}_{b,21} (mK^2)$')
         ax.set_xlabel(f'z')
         ax.set_xlim(z_ps.min(),z_ps.max())
-        ax.set_ylim(power_arr[:,:,k_idx[0,i]].max()/100,power_arr[:,:,k_idx[0,i]].max())
+        ax.set_ylim(power_arr[:,:,k_idx[0,i]].max()/50,power_arr[:,:,k_idx[0,i]].max()*2)
         ax.grid()
         ax_text = k_text[i] if subplot_k else names[i]
         if ax_text:
