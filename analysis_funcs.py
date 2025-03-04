@@ -790,7 +790,7 @@ def global_integrals(inputs,fields,ave_mturns,ave_mturns_mini,lnMmin,lnMmax):
             if fo.USE_MINI_HALOS:
                 result += fesc_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * hubble / ap_c["t_STAR"] * ap_c['POP3_ION']
         elif field == 'halo_xray':
-            if fo.USE_HALO_FIELD:
+            if not fo.USE_HALO_FIELD:
                 result = star_acg_integral * cp.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["L_X"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
                 if fo.USE_MINI_HALOS:
                     result += star_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["L_X_MINI"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr

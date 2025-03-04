@@ -429,7 +429,7 @@ def field_comparison_plot(cvfiles,outname,kind='xH_box',logx=False):
     fig.savefig(outname)
 
 
-def global_integral_plot(lcfiles,fields,outname,names,zmax=20):
+def global_integral_plot(lcfiles,fields,outname,names=None,zmax=20):
     fig,ax = plt.subplots(2,len(fields),figsize=(16,12/len(fields)*2),layout='constrained')
     fig.get_layout_engine().set(w_pad=0 / 72, h_pad=0 / 72, hspace=0.0,
                             wspace=0.0)
