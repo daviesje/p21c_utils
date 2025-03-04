@@ -142,7 +142,7 @@ def get_halo_fields(redshift,inputs,init_box,ptb,lagrangian=False):
 
 #gets properties from either HaloField or PerturbHaloField
 #ignoring feedback and with possible alterations to parameters
-def get_props_from_halofield(halo_field,inputs,sel=None,kinds=['sfr',]):
+def get_props_from_halofield(halo_field,inputs=None,sel=None,kinds=['sfr',]):
     #fake pt_halos
     zero_array = ffi.cast("float *", np.zeros(halo_field.user_params.HII_DIM**3,dtype='f4').ctypes.data)
 
@@ -158,6 +158,14 @@ def get_props_from_halofield(halo_field,inputs,sel=None,kinds=['sfr',]):
     if sel is None:
         sel = slice(0,halo_field.n_halos)
     n_halos = halo_field.halo_masses[sel].size
+
+    if inputs is None:
+        inputs = p21c.InputParameters(
+            user_params=halo_field.user_params,
+            cosmo_params=halo_field.cosmo_params,
+            astro_params=halo_field.astro_params,
+            flag_options=halo_field.flag_options,
+        )
 
     pt_halos = p21c.PerturbHaloField(
         inputs=inputs,
@@ -369,14 +377,14 @@ def get_expected_lagrangian(redshift,inputs,delta,lnMmin,lnMmax):
     prefactor_mass = rhocrit * inputs.cosmo_params.OMm
     prefactor_stars = rhocrit * inputs.cosmo_params.OMb * ap_c['F_STAR10']
     prefactor_sfr = prefactor_stars / ap_c['t_STAR'] / t_h
-    prefactor_nion = prefactor_stars * ap_c['F_ESC10'] * p21c.global_params.Pop2_ion
+    prefactor_nion = prefactor_stars * ap_c['F_ESC10'] * ap_c['POP2_ION']
     prefactor_wsfr = prefactor_sfr * ap_c['F_ESC10']
     prefactor_xray = rhocrit * inputs.cosmo_params.OMm
 
     #TODO: add minihalos
     # prefactor_stars_mini = rhocrit * cosmo_params.OMb * astro_params.F_STAR7
     # prefactor_sfr_mini = prefactor_stars_mini / astro_params.t_STAR / t_h
-    # prefactor_nion_mini = prefactor_stars_mini * astro_params.fesc_7 * p21c.global_params.Pop3_ion
+    # prefactor_nion_mini = prefactor_stars_mini * astro_params.fesc_7 * ap_c['POP3_ION']
     # prefactor_wsfr_mini = prefactor_sfr_mini * astro_params.fesc_7
     # prefactor_xray_mini = prefactor_sfr_mini * astro_params.l_x_mini * s_per_yr
 
@@ -774,30 +782,31 @@ def global_integrals(inputs,fields,ave_mturns,ave_mturns_mini,lnMmin,lnMmax):
         elif field == 'halo_sfr_mini':
             result = star_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"] * hubble / ap_c["t_STAR"]
         elif field == 'n_ion':
-            result = fesc_acg_integral * cp.OMb * rhocrit * ap_c["F_STAR10"] * p21c.global_params.Pop2_ion * ap_c["F_ESC10"]
+            result = fesc_acg_integral * cp.OMb * rhocrit * ap_c["F_STAR10"] * ap_c['POP2_ION'] * ap_c["F_ESC10"]
             if fo.USE_MINI_HALOS:
-                result += fesc_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * p21c.global_params.Pop3_ion
+                result += fesc_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * ap_c['POP3_ION']
         elif field == 'whalo_sfr':
-            result = fesc_acg_integral * cp.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["F_ESC10"] * hubble / ap_c["t_STAR"] * p21c.global_params.Pop2_ion
+            result = fesc_acg_integral * cp.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["F_ESC10"] * hubble / ap_c["t_STAR"] * ap_c['POP2_ION']
             if fo.USE_MINI_HALOS:
-                result += fesc_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * hubble / ap_c["t_STAR"] * p21c.global_params.Pop3_ion
+                result += fesc_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * hubble / ap_c["t_STAR"] * ap_c['POP3_ION']
         elif field == 'halo_xray':
-            if lc.fo.USE_HALO_FIELD:
+            if fo.USE_HALO_FIELD:
                 result = star_acg_integral * cp.OMb * rhocrit * ap_c["F_STAR10"] * ap_c["L_X"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
                 if fo.USE_MINI_HALOS:
                     result += star_mcg_integral * cp.OMb * rhocrit * ap_c["F_STAR7_MINI"] * ap_c["L_X_MINI"] * hubble / ap_c["t_STAR"] * 1e-38 * s_per_yr
             else:
                 result = xray_integral * cp.OMm * rhocrit * 1e-38
         elif field == 'xH_box':
-            result = fesc_acg_integral * ap_c["F_STAR10"] * p21c.global_params.Pop2_ion * ap_c["F_ESC10"]
+            result = fesc_acg_integral * ap_c["F_STAR10"] * ap_c['POP2_ION'] * ap_c["F_ESC10"]
             if fo.USE_MINI_HALOS:
-                result += fesc_mcg_integral * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * p21c.global_params.Pop3_ion
+                result += fesc_mcg_integral * ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * ap_c['POP3_ION']
         elif field == 'Fcoll':
             result = fesc_acg_integral
         elif field == 'Fcoll_MINI':
                 result += fesc_mcg_integral
         else:
-            raise ValueError("bad field")
+            logger.warning(f'Unknown field {field}')
+            result = np.zeros_like(redshifts)
 
         results += [result]
     
@@ -815,11 +824,11 @@ def match_global_function(fields,lc,lnMmin,lnMmax):
         cosmo_params = lc.cosmo_params,
         user_params = lc.user_params,
         flag_options = lc.flag_options,
-        redshifts = lc.node_redshifts,
+        node_redshifts = lc.inputs.node_redshifts,
         random_seed = lc.random_seed,
     )
     
-    ave_mturns = 10**lc.log10_mturnovers
-    ave_mturns_mini = 10**lc.log10_mturnovers_mini
-
+    ave_mturns = 10**lc.global_quantities['log10_mturn_acg']
+    ave_mturns_mini = 10**lc.global_quantities['log10_mturn_mcg']
+    
     return global_integrals(inputs,fields,ave_mturns,ave_mturns_mini,lnMmin,lnMmax)

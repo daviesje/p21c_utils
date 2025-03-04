@@ -16,6 +16,7 @@ from .analysis_funcs import match_global_function, get_lc_powerspectra, get_prop
 from .postprocessing import xray_bg, xray_xps, cii_xps, make_cii_map, gal_xps, make_gal_lc, make_cii_coev
 from .spec_conversions import sfr_to_Muv
 from .io import find_closest_box, read_cv_ignoreparams, read_lc_ignoreparams, parse_lc_list
+from pathlib import Path
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -32,23 +33,24 @@ def summary_plot(lc_file,hf_file,outname=None):
     axs[0].text(0.05,0.95,'UVLF',transform=axs[0].transAxes,verticalalignment='top',horizontalalignment='left',
                             bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
 
-    lc = p21c.LightCone.read(lc_file,safe=False)
+    lc = p21c.LightCone.from_file(lc_file,safe=False)
     setattr(lc,"CII_Box",make_cii_map(lc)[0])
 
     #21cm PS FIXED Z
-    powerspec_plot([lc,],output=None,names=[r''],z_out=(0.5,),z_type='XHI',axs=[axs[1],])
-    axs[1].text(0.05,0.95,r'$\Delta_{21} (k,z=8)$',transform=axs[1].transAxes,verticalalignment='top',horizontalalignment='left',
+    powerspec_plot([lc,],None,None,z_out=(0.5,),z_type='XHI',axs=[axs[1],])
+    axs[1].text(0.05,0.95,r'$\Delta_{21} (k, Q=0.5)$',transform=axs[1].transAxes,verticalalignment='top',horizontalalignment='left',
                             bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
     
     #21cm PS FIXED K
-    largescale_powerplot([lc,],output=None,names=[r''],k_target=(0.1,),axs=[axs[2],])
-    axs[2].text(0.05,0.95,r'$\Delta_{21} (z,k=0.1)$',transform=axs[2].transAxes,verticalalignment='top',horizontalalignment='left',
+    largescale_powerplot([lc,],None,None,k_target=(0.1,),axs=[axs[2],])
+    axs[2].text(0.05,0.95,r'$\Delta_{21} (k=0.1, z)$',transform=axs[2].transAxes,verticalalignment='top',horizontalalignment='left',
                             bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
 
     #CII X PLOT
     k_arr, power_arr, z_ps = get_lc_powerspectra([lc,],z_list=[12,],kind='brightness_temp',kind2='CII_Box',
                                                 subtract_mean=[False,True],divide_mean=[False,True],
                                                 n_psbins=20,z_type='redshift')
+    
     axs[3].set_xlim(k_arr[0,:,1:].min(),k_arr.max())
     axs[3].set_ylabel(r'$\left< \delta T_{b,21} \delta_{CII} \right> \frac{k^3}{2\pi}$ (mK)')
     axs[3].set_xlabel(r'$k (\mathrm{Mpc}^{-1})$')
@@ -57,11 +59,13 @@ def summary_plot(lc_file,hf_file,outname=None):
     axs[3].set_yscale('symlog',linthresh=2e-1)
     axs[3].set_xscale('log')
     axs[3].grid()
-    axs[3].text(0.05,0.95,'21cm X CII Cross',transform=axs[3].transAxes,verticalalignment='top',horizontalalignment='left',
+    axs[3].text(0.05,0.95,r'$\Delta_{21xCII} (k, z=12)$',transform=axs[3].transAxes,verticalalignment='top',horizontalalignment='left',
                             bbox=dict(facecolor='white', edgecolor='black', boxstyle='round'))
+
+    fix_ticks(fig,sharex=False,sharey=False)
     if outname:
         fig.savefig(outname)
-    return fig, axs
+    return fig,axs
 
 def uv_lf_ax(hf_ax,names,ax,pth=True):
     ax.set_xlim([-15,-24.5])
@@ -173,12 +177,15 @@ def gal_colocation_plot(coev_list,halofield_list,names,outname,cv_kinds=None,hf_
         hf_kinds = [hf_kinds,]*len(halofield_list)
 
     for i,(coevf,halofieldf,cvk,hfk) in enumerate(zip(coev_list,halofield_list,cv_kinds,hf_kinds)):
-        coev = p21c.Coeval.read(coevf,safe=False)
-
-        if 'CII_box' == cvk:
+        logger.info(f'plotting {i}, {cvk}, {hfk}')
+        
+        if i == 0 or coevf != coev_list[i-1]:
+            coev = p21c.Coeval.read(coevf,safe=False)
+        if 'CII_box' == cvk and not hasattr(coev,'CII_box'):
             setattr(coev,"CII_box",make_cii_coev(coev))
 
-        halofield = p21c.PerturbHaloField.from_file(halofieldf,arrays_to_load=None,safe=False)
+        if i == 0 or halofieldf != halofield_list[i-1]:
+            halofield = p21c.PerturbHaloField.from_file(halofieldf,arrays_to_load=None,safe=False)
 
         slmin = slice_index - ((slice_width-1)//2)
         slmax = slice_index + (slice_width//2 + 1)
@@ -203,7 +210,7 @@ def gal_colocation_plot(coev_list,halofield_list,names,outname,cv_kinds=None,hf_
                                                     ,vmax=spec['vmax'],slice_index=slice_index,interpolation='none')
         
         #select largest N halos
-        marker_color = 'red' if all(cv_kinds) == 'brightness_temp' else 'xkcd:neon green'
+        marker_color = 'xkcd:neon green' if all(cv_kinds) == 'brightness_temp' else 'red'
         # if hfk == "Muv":
         #     #points and labels will be overwritten by the same thing
         #     points = []
@@ -329,8 +336,8 @@ def ionisation_state_plot(cvfiles,outname):
             const_factor_mini = 0
             # y_vals = (cv.n_ion/rhocrit/cv.cosmo_params.OMb).flatten()
         else:
-            const_factor = ap_c["F_STAR10"] * ap_c["F_ESC10"] * cv.global_params["Pop2_ion"] * (1 + x_vals)
-            const_factor_mini = ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * cv.global_params["Pop3_ion"] * (1 + x_vals)
+            const_factor = ap_c["F_STAR10"] * ap_c["F_ESC10"] * ap_c["Pop2_ion"] * (1 + x_vals)
+            const_factor_mini = ap_c["F_STAR7_MINI"] * ap_c["F_ESC7_MINI"] * ap_c["Pop3_ion"] * (1 + x_vals)
 
         buf = cv.Fcoll
         buf_mini = cv.Fcoll_MINI
@@ -426,24 +433,24 @@ def global_integral_plot(lcfiles,fields,outname,names,zmax=20):
     fig,ax = plt.subplots(2,len(fields),figsize=(16,12/len(fields)*2),layout='constrained')
     fig.get_layout_engine().set(w_pad=0 / 72, h_pad=0 / 72, hspace=0.0,
                             wspace=0.0)
-    
-    for j,lcfile in enumerate(lcfiles):
-        lc = p21c.LightCone.read(lcfile,safe=False)
-        if not hasattr(lc,"global_n_ion"):
-            logger.info(f"{lcfile} has no halos, continuing...")
-            continue
-        zmax = float(zmax) if zmax is not None else lc.node_redshifts[-1]
-        plot_idx = lc.node_redshifts < zmax
-        plot_z = lc.node_redshifts[plot_idx]
+
+    for j,lc in enumerate(lcfiles):
+        if isinstance(lc,(str,Path)): 
+            lc = p21c.LightCone.from_file(lc,safe=False)
+        if not isinstance(lc,p21c.LightCone):
+            raise ValueError("lc list must be either py21cmfast.LightCone or string")
+
+        z_arr = np.array(lc.inputs.node_redshifts)
+        zmax = float(zmax) if zmax is not None else z_arr[-1]
+        plot_idx = z_arr < zmax
+        plot_z = z_arr[plot_idx]
 
         if lc.flag_options.USE_MINI_HALOS:
-            Mmin = lc.global_params['M_MIN_INTEGRAL']
+            Mmin = 1e5
         else:
             Mmin = 10**lc.astro_params.M_TURN / 50.
-        # Mmin = lc.global_params["SAMPLER_MIN_MASS"]
-        Mmax = lc.global_params["M_MAX_INTEGRAL"]
-        kwargs_expected = {'Mmin' : Mmin,
-                'Mmax' : Mmax,
+        Mmax = 1e16
+        kwargs_expected = {
                 'lnMmin' : np.log(Mmin),
                 'lnMmax' : np.log(Mmax),
             }
@@ -454,17 +461,17 @@ def global_integral_plot(lcfiles,fields,outname,names,zmax=20):
             [ax[0,i].plot(plot_z,expected_global[i],'r:',linewidth=5) for i,field in enumerate(fields)]
 
         for i,field in enumerate(fields):
-            field_lc = 'global_' + field
-            if field_lc.endswith("_box"):
-                field_lc = field_lc[:-4]
+            if field not in lc.global_quantities.keys():
+                logger.info(f'lightcone {j} does not have {field}')
+                continue
 
-            f_array = getattr(lc,field_lc)[plot_idx]
+            f_array = lc.global_quantities[field][plot_idx]
             # for xH_box we want special treatment
             if field == 'xH_box':
                 f_array = 1-f_array
                 if "n_ion" in fields:
                     rhocrit = (lc.cosmo_params.cosmo.critical_density(0)).to('M_sun Mpc-3').value
-                    f_array2 = getattr(lc,"global_n_ion")[plot_idx] / rhocrit / lc.cosmo_params.OMb
+                    f_array2 = lc.global_quantities["n_ion"][plot_idx] / rhocrit / lc.cosmo_params.OMb
                     ax[0,i].plot(plot_z,f_array2,color=f'C{j:02d}',linestyle=':')
 
             ax[0,i].plot(plot_z,f_array,color=f'C{j:02d}',label=names[j] if names else None)
@@ -489,7 +496,7 @@ def global_integral_plot(lcfiles,fields,outname,names,zmax=20):
 
 def plot_xrb(titles,noise_x=1e-16,res_x_arcsec=5,noise_flag=True):
     #setup inputs and parameters
-    lightcones = [p21c.LightCone.read(title,safe=False) for title in titles]
+    lightcones = [p21c.LightCone.from_file(title,safe=False) for title in titles]
 
     fig, axs = plt.subplots(1 + noise_flag,len(lightcones), figsize=(12,(1+noise_flag)*12/len(lightcones)),squeeze=False)
     axs[0,0].set_ylabel('No Noise')
@@ -523,7 +530,7 @@ def plot_xrb(titles,noise_x=1e-16,res_x_arcsec=5,noise_flag=True):
 
 def cell_history_plot(lcfile,cache):    
     p21c.config['direc'] = cache
-    lc = p21c.LightCone.read(lcfile,safe=False)
+    lc = p21c.LightCone.from_file(lcfile,safe=False)
 
     z_targets = np.linspace(6,12,num=20)
 
@@ -666,7 +673,7 @@ def make_cii_xps_plot(lc,z_arr,k_arr,xps_arr,outname,z_range=(6,16),plot_diagnos
 def plot_cii_xps(lcfile,outname,bt_thermal=False,bt_uvcov=False,bt_wedge='none',
                  cii_noisefile=None,n_psbins=24,z_max=50.,**kwargs
                  ):
-    lc = p21c.LightCone.read(lcfile,safe=False)
+    lc = p21c.LightCone.from_file(lcfile,safe=False)
     z_targets = np.array([6.5,9,11])
     bt_lc, cii_lc, k_arr, power_arr, z_ps, _ = cii_xps(lc,bt_thermal=bt_thermal,bt_uvcov=bt_uvcov,n_psbins=n_psbins,
                                             bt_wedge=bt_wedge,ps_z=z_targets,cii_noisefile=cii_noisefile,z_max=z_max)
@@ -680,7 +687,7 @@ def plot_cii_xps(lcfile,outname,bt_thermal=False,bt_uvcov=False,bt_wedge='none',
 
 
 def plot_cii(lcfile):
-    lc = p21c.LightCone.read(lcfile,safe=False)
+    lc = p21c.LightCone.from_file(lcfile,safe=False)
     cii_lc = make_cii_map(lc)
     
     #HACK to make zeros colored in
@@ -707,7 +714,7 @@ def plot_cii(lcfile):
 
 
 def plot_galx(lcfile):
-    lc = p21c.LightCone.read(lcfile,safe=False)
+    lc = p21c.LightCone.from_file(lcfile,safe=False)
     ps_z = np.array([6.5,8,10,12])
     z_lc = lc.lightcone_redshifts
     ps_idx = np.argmin(np.fabs(z_lc[None,:] - ps_z[:,None]),axis=1)
@@ -759,7 +766,7 @@ def plot_galx(lcfile):
     fig.savefig('./plots/gal_xcorr_wedge.png')
 
 def plot_xray_xps(lcfile):
-    lc = p21c.LightCone.read(lcfile,safe=False)
+    lc = p21c.LightCone.from_file(lcfile,safe=False)
 
     xps,k = xray_xps(lc)
 
@@ -775,7 +782,7 @@ def global_seriesplot(lc_list,kinds,zmax,names,output):
     lightcones = []
     for lc in lc_list:
         if isinstance(lc,str): 
-            lc = p21c.LightCone.read(lc,safe=False)
+            lc = p21c.LightCone.from_file(lc,safe=False)
         if not isinstance(lc,p21c.LightCone):
             raise ValueError("lc list must be either py21cmfast.LightCone or string")
         lightcones.append(lc)
@@ -791,7 +798,7 @@ def global_seriesplot(lc_list,kinds,zmax,names,output):
     lines =  ['-',':','--','-.','-',':','--','-.']
     for i,lc in enumerate(lightcones):
         if 'n_ion' in kinds:
-            setattr(lc,'n_ion',getattr(lc,'n_ion')*(C.M_sun/C.m_p).to('').value)
+            lc.lightcones['n_ion'] = lc.lightcones['n_ion']*(C.M_sun/C.m_p).to('').value
         for j,g in enumerate(kinds):
             spec = pspecs[g]
             try:
@@ -867,7 +874,7 @@ def lc_seriesplot(lc_list,kinds,zrange,output,names=None,vertical=True):
     lightcones = []
     for lc in lc_list:
         if isinstance(lc,str): 
-            lc = p21c.LightCone.read(lc,safe=False)
+            lc = p21c.LightCone.from_file(lc,safe=False)
         if not isinstance(lc,p21c.LightCone):
             raise ValueError("lc list must be either py21cmfast.LightCone or string")
         lightcones.append(lc)
@@ -880,7 +887,7 @@ def lc_seriesplot(lc_list,kinds,zrange,output,names=None,vertical=True):
     num_plots = len(lc_list) * len(kinds)
     nrows = 1 if vertical else num_plots
     ncols = 1 if not vertical else num_plots
-    plot_dims = [8,5*(z_len+1)/getattr(lightcones[-1], kinds[0]).shape[1]/num_plots]
+    plot_dims = [8,5*(z_len+1)/lightcones[-1].lightcone_dimensions[1]/num_plots]
     plot_dims = plot_dims[::-1] if not vertical else plot_dims
                             
     fig, axs = plt.subplots(nrows, ncols,
@@ -896,12 +903,12 @@ def lc_seriesplot(lc_list,kinds,zrange,output,names=None,vertical=True):
     for i,lc in enumerate(lightcones):
         if 'n_ion' in kinds:
             rhocrit = (lc.cosmo_params.cosmo.critical_density(0)).to('M_sun Mpc-3').value
-            nion_converted = getattr(lc,"n_ion") / rhocrit / lc.cosmo_params.OMb
+            nion_converted = lc.lightcones['n_ion'] / rhocrit / lc.cosmo_params.OMb
             setattr(lc,'n_ion',nion_converted)
         if 'CII_box' in kinds:
             setattr(lc,'CII_box',make_cii_map(lc)[0])
         for j,kind in enumerate(kinds):
-            xyz = getattr(lc,kind)
+            xyz = lc.lightcones[kind]
             logger.info(f" LC {i}: {kind}: MIN {xyz.min():.3e}, MAX {xyz.max():.3e}, MEAN {xyz.mean():.3e}")
             spec = find_pspec(kind,lc)
             ax_idx = j+i*len(kinds)
@@ -960,7 +967,7 @@ def largescale_powerplot(lc_list,output='',names=None,k_target=(0.1,),z_max=16,k
     #  this doesn't assume that they are the same size but cadence may vary
     #  if there are lightcones of very differenct sizes in the list
     n_lc = len(lc_list)
-    lc =  lc_list[0] if isinstance(lc_list[0],p21c.LightCone) else p21c.LightCone.read(lc_list[0],safe=False)
+    lc =  lc_list[0] if isinstance(lc_list[0],p21c.LightCone) else p21c.LightCone.from_file(lc_list[0],safe=False)
     lc_z = lc.lightcone_redshifts
     hii_dim = lc.user_params.HII_DIM
     dim_buffer = int(hii_dim/2)
@@ -1038,7 +1045,7 @@ def powerspec_plot(lc_list,output='',names=None,z_out=(11,9,7),kind='brightness_
     lightcones = []
     for lc in lc_list:
         if isinstance(lc,str): 
-            lc = p21c.LightCone.read(lc,safe=False)
+            lc = p21c.LightCone.from_file(lc,safe=False)
         if not isinstance(lc,p21c.LightCone):
             raise ValueError("lc list must be either py21cmfast.LightCone or string")
         if 'CII_box' in (kind,kind2):
@@ -1175,7 +1182,7 @@ def angular_lc_plot(lc,lcn,fname,kinds=('brightness_temp',)):
         vmin, vmax = pspecs[kind]['vmin'], pspecs[kind]['vmax']
         
         img = ax.pcolormesh(H[i_min:i_max,:], D[i_min:i_max,:],
-                                getattr(lc,kind)[i_min:i_max,:],
+                                lc.lightcones[kind][i_min:i_max,:],
                                 edgecolors='face', cmap=pspecs[kind]['cmap'],
                                 shading='auto', vmin=vmin, vmax=vmax)
         
