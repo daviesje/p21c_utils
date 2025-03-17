@@ -455,10 +455,8 @@ def global_integral_plot(lcfiles,fields,outname,names=None,zmax=20):
                 'lnMmax' : np.log(Mmax),
             }
 
-        #only do expected globals for first LC (assume same params)
-        if j==0:
-            expected_global = match_global_function(fields,lc,**kwargs_expected)[:,plot_idx]
-            [ax[0,i].plot(plot_z,expected_global[i],'r:',linewidth=5) for i,field in enumerate(fields)]
+        expected_global = match_global_function(fields,lc,**kwargs_expected)[:,plot_idx]
+        [ax[0,i].plot(plot_z,expected_global[i],color=f'C{j:02d}',linestyle='--',linewidth=3) for i,field in enumerate(fields) if field in lc.global_quantities.keys()]
 
         for i,field in enumerate(fields):
             if field not in lc.global_quantities.keys():
@@ -469,7 +467,7 @@ def global_integral_plot(lcfiles,fields,outname,names=None,zmax=20):
             # for xH_box we want special treatment
             if field == 'xH_box':
                 f_array = 1-f_array
-                if "n_ion" in fields:
+                if "n_ion" in lc.global_quantities.keys():
                     rhocrit = (lc.cosmo_params.cosmo.critical_density(0)).to('M_sun Mpc-3').value
                     f_array2 = lc.global_quantities["n_ion"][plot_idx] / rhocrit / lc.cosmo_params.OMb
                     ax[0,i].plot(plot_z,f_array2,color=f'C{j:02d}',linestyle=':')
