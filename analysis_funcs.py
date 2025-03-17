@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def lightcone_axis_mean(lc,kind='brightness_temp',smooth_cells=3,smooth_filter='boxcar'):
-    lc_z_means = getattr(lc,kind).mean(axis=(0,1))
+    lc_z_means = lc.lightcones[kind].mean(axis=(0,1))
     if smooth_filter == 'boxcar':
         lc_z_means = uniform_filter1d(lc_z_means,smooth_cells,mode='reflect')
     if smooth_filter == 'gaussian':
@@ -589,8 +589,8 @@ def compute_power_lc(
         slice_min = slice_idx - dim[0]//2
         slice_max = slice_idx + dim[0]//2 + dim[0]%2
 
-        field_1 = getattr(lc,kind)
-        field_2 = getattr(lc2,kind2)
+        field_1 = lc.lightcones[kind]
+        field_2 = lc.lightcones[kind2]
 
         k_arr = np.zeros((len(redshifts),n_psbins))
         p_arr = np.zeros((len(redshifts),n_psbins))
@@ -644,44 +644,47 @@ def get_lc_powerspectra(lc_list,z_list,kind='brightness_temp',kind2=None,subtrac
         if isinstance(lcf,p21c.LightCone):
             lc = lcf
         else:
-            lc = p21c.LightCone.read(lcf,safe=False)
+            lc = p21c.LightCone.from_file(lcf,safe=False)
 
         z_targets = np.zeros_like(z_list)
+        dtb_global = lc.global_quantities['brightness_temp']
+        xhi_global = lc.global_quantities['xH_box']
         for j,(z,zt) in enumerate(zip(z_list,z_type)):
             if zt.lower() == 'redshift':
                 z_targets[j] = z
             elif zt.lower() == 'xhi':
-                z_targets[j] = np.interp(z,lc.global_xH[::-1],lc.node_redshifts[::-1])
+                z_targets[j] = np.interp(z,xhi_global[::-1],lc.inputs.node_redshifts[::-1])
             elif zt.lower() == 'bt_zero':
                 #we want the reheating shift, not post-ion or re-coupling
                 #interpolate between nodes by finding the last crossing of zero
-                idx_heat = np.argwhere((np.diff(np.sign(lc.global_brightness_temp)) >= 1)).min()
-                interp_range = lc.global_brightness_temp[idx_heat-10:idx_heat+10] #increasing
-                z_targets[j] = np.interp(0,interp_range,lc.node_redshifts[idx_heat-10:idx_heat+10])
+                idx_heat = np.argwhere((np.diff(np.sign(dtb_global)) >= 1)).min()
+                interp_range = dtb_global[idx_heat-10:idx_heat+10] #increasing
+                z_targets[j] = np.interp(0,interp_range,lc.inputs.node_redshifts[idx_heat-10:idx_heat+10])
             elif zt.lower() == 'bt_min':
-                z_targets[j] = lc.node_redshifts[np.argmin(lc.global_brightness_temp)]
+                z_targets[j] = lc.inputs.node_redshifts[np.argmin(dtb_global)]
             elif zt.lower() == 'bt_max':
-                z_targets[j] = lc.node_redshifts[np.argmax(lc.global_brightness_temp)]
+                z_targets[j] = lc.inputs.node_redshifts[np.argmax(dtb_global)]
             else:
                 raise ValueError(f"{zt} not a real ztype")
         logger.info(f"targets {z_list} ({z_type}) ==> {z_targets}")
         #subtract/divide the means in each slice
-        field_1 = getattr(lc,kind)
-        mean_z_1 = getattr(lc,kind).mean(axis=(0,1))[None,None,:]
+        field_1 = lc.lightcones[kind]
+        mean_z_1 = field_1.mean(axis=(0,1))[None,None,:]
         if subtract_mean[0]:
             field_1 = field_1 - mean_z_1
         if divide_mean[0]:
             field_1 = field_1 / mean_z_1
-        setattr(lc,kind+'_ps',field_1)
+        lc.lightcones[kind+'_ps'] = field_1
 
+        
         if kind2 is not None:
-            field_2 = getattr(lc,kind2)
-            mean_z_2 = getattr(lc,kind2).mean(axis=(0,1))[None,None,:]
-            if subtract_mean[1]:
+            field_2 = lc.lightcones[kind2]
+            mean_z_2 = field_2.mean(axis=(0,1))[None,None,:]
+            if subtract_mean[0]:
                 field_2 = field_2 - mean_z_2
-            if divide_mean[1]:
+            if divide_mean[0]:
                 field_2 = field_2 / mean_z_2
-            setattr(lc,kind2+'_ps',field_2)
+            lc.lightcones[kind2+'_ps'] = field_2
 
         logger.info(f'getting {len(z_targets)} powerspectra in {n_psbins} bins')
 
@@ -819,14 +822,7 @@ def match_global_function(fields,lc,lnMmin,lnMmax):
     uses the lightcone object to get the necessary parameters
     """
 
-    inputs = p21c.InputParameters(
-        astro_params = lc.astro_params,
-        cosmo_params = lc.cosmo_params,
-        user_params = lc.user_params,
-        flag_options = lc.flag_options,
-        node_redshifts = lc.inputs.node_redshifts,
-        random_seed = lc.random_seed,
-    )
+    inputs = lc.inputs
     
     ave_mturns = 10**lc.global_quantities['log10_mturn_acg']
     ave_mturns_mini = 10**lc.global_quantities['log10_mturn_mcg']
