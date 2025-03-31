@@ -6,9 +6,11 @@ from copy import deepcopy
 
 import py21cmfast as p21c
 from py21cmfast.c_21cmfast import ffi,lib
+from py21cmfast.wrapper import cfuncs as cf
 from astropy import units as U
 
 from scipy.ndimage import gaussian_filter1d, uniform_filter1d
+from .io import read_lightcone
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -140,223 +142,44 @@ def get_halo_fields(redshift,inputs,init_box,ptb,lagrangian=False):
     )
     return halo_field,pt_halos,hbox,hbox_ss
 
-#gets properties from either HaloField or PerturbHaloField
-#ignoring feedback and with possible alterations to parameters
-def get_props_from_halofield(halo_field,inputs=None,sel=None,kinds=['sfr',]):
-    #fake pt_halos
-    zero_array = ffi.cast("float *", np.zeros(halo_field.user_params.HII_DIM**3,dtype='f4').ctypes.data)
-
-    if inputs is None:
-        #we don't use the node redshifts here so it's fine to have default
-        inputs = p21c.InputParameters(
-            user_params=halo_field.user_params,
-            cosmo_params=halo_field.cosmo_params,
-            astro_params=halo_field.astro_params,
-            flag_options=halo_field.flag_options,
-            random_seed=halo_field.random_seed,
-        )
-    if sel is None:
-        sel = slice(0,halo_field.n_halos)
-    n_halos = halo_field.halo_masses[sel].size
-
-    if inputs is None:
-        inputs = p21c.InputParameters(
-            user_params=halo_field.user_params,
-            cosmo_params=halo_field.cosmo_params,
-            astro_params=halo_field.astro_params,
-            flag_options=halo_field.flag_options,
-        )
-
-    pt_halos = p21c.PerturbHaloField(
+def get_cell_integrals(redshift,inputs,deltas,l10mturns_acg,l10mturns_mcg):
+    n_integral, m_integral = cf.evaluate_condition_integrals(
         inputs=inputs,
-        buffer_size=n_halos
+        cond_array=deltas,
+        redshift=redshift,
     )
-    pt_halos()
-    pt_halos.n_halos = n_halos
-    setattr(pt_halos.cstruct,'n_halos',n_halos)
-    pt_halos.halo_masses[...] = halo_field.halo_masses[sel]
-    pt_halos.star_rng[...] = halo_field.star_rng[sel]
-    pt_halos.sfr_rng[...] = halo_field.sfr_rng[sel]
-    pt_halos.xray_rng[...] = halo_field.xray_rng[sel]
-
-    #get props w/o feedback
-    props_out = np.zeros(int(12*pt_halos.n_halos)).astype('f4')
-    lib.test_halo_props(
-        halo_field.redshift,
-        inputs.user_params.cstruct,
-        inputs.cosmo_params.cstruct,
-        inputs.astro_params.cstruct,
-        inputs.flag_options.cstruct,
-        zero_array,
-        zero_array,
-        zero_array,
-        zero_array,
-        pt_halos(),
-        ffi.cast("float *", props_out.ctypes.data),
+    cell_side = inputs.user_params.BOX_LEN / inputs.user_params.HII_DIM
+    radius = (4*np.pi/3)**(-1./3.)
+    integral_stars,integral_stars_mini = cf.evaluate_SFRD_cond(
+        inputs=inputs,
+        redshift=redshift,
+        densities=deltas,
+        radius=radius,
+        log10mturns=l10mturns_mcg, 
+    )
+    integral_fesc,integral_fesc_mini = cf.evaluate_Nion_cond(
+        inputs=inputs,
+        redshift=redshift,
+        densities=deltas,
+        radius=radius,
+        l10mturns_acg=l10mturns_acg,
+        l10mturns_mcg=l10mturns_mcg, 
     )
 
-    props_out = props_out.reshape((pt_halos.n_halos,12))
-    
-    sel = np.any(~np.isfinite(props_out),axis=-1)
-    if sel.sum() > 0:
-            print(f'{sel.sum()} invalid halos')
-            print(f'First 10: {props_out[sel,:][:10,:]}')
-
-    index_map = {'mass' : 0, 'star' : 1, 'sfr' : 2, 'xray' : 3, 'nion' : 4, 'wsfr' : 5,
-                 'star_mini' : 6, 'sfr_mini' : 7, 'mturn_a' : 8, 
-                 'mturn_m' : 9, 'mturn_r' : 10, 'metallicity' : 11}
-    
-    return {kind:props_out[:,index_map[kind]] for kind in kinds}
-
-def get_cell_integrals(redshift,inputs,delta,lnMmin,lnMmax):
-    #pass info to backend
-    lib.Broadcast_struct_global_all(
-        inputs.user_params.cstruct,
-        inputs.cosmo_params.cstruct,
-        inputs.astro_params.cstruct,
-        inputs.flag_options.cstruct
-    )
-    lib.init_ps()
-
-    ap_c = inputs.astro_params.cdict
-
-    rhocrit = inputs.cosmo_params.cosmo.critical_density(0)
-    growth = lib.dicke(redshift)
-    lnMmin = np.log(inputs.user_params.SAMPLER_MIN_MASS)
-    lnMmax = np.log(1e15) #must be > cell but < table max
-    cell_volume = (inputs.user_params.BOX_LEN * U.Mpc / inputs.user_params.HII_DIM) ** 3
-    cell_mass = (rhocrit * inputs.cosmo_params.OMm * cell_volume).to("M_sun")
-    sigma_cell = lib.sigma_z0(cell_mass.value)
-    Mlim_Fstar = 1e10 * (ap_c['F_STAR10']) ** (-1.0 / ap_c['ALPHA_STAR'])
-    Mlim_Fesc = 1e10 * (ap_c['F_ESC10']) ** (-1.0 / ap_c['ALPHA_ESC'])
-    
-    Mlim_Fstar_MINI = 1e7 * (ap_c['F_STAR7_MINI']) ** (-1.0 / ap_c['ALPHA_STAR_MINI'])
-    Mlim_Fesc_MINI = 1e7 * (ap_c['F_ESC7_MINI']) ** (-1.0 / ap_c['ALPHA_ESC'])
-
-    Mturn_acg = lib.atomic_cooling_threshold(redshift) if inputs.flag_options.USE_MINI_HALOS else ap_c['M_TURN']
-    Mturn_mcg = ap_c['M_TURN'] # no LW
-
-    t_h = 1 / inputs.cosmo_params.cosmo.H(redshift).to('s-1').value
-
-    if lnMmax < 0:
-        lnMMax = cell_mass
-        
-    if (
-        inputs.user_params.INTEGRATION_METHOD_ATOMIC == 'GAUSS-LEGENDRE'
-        or inputs.user_params.INTEGRATION_METHOD_MINI == 'GAUSS-LEGENDRE'
-    ):
-        lib.initialise_GL(lnMmin, lnMmax)
-
-    #NOTE: Minihalo integrals assume no feedback
-    m_integral = lib.Mcoll_Conditional(
-            growth,
-            lnMmin,
-            lnMmax,
-            np.log(cell_mass.value),
-            sigma_cell,
-            delta,
-            0,
-    )
-    integral_stars = lib.Nion_ConditionalM(
-        growth,
-        lnMmin,
-        lnMmax,
-        np.log(cell_mass.value),
-        sigma_cell,
-        delta,
-        Mturn_acg,
-        ap_c['ALPHA_STAR'],
-        ap_c['ALPHA_ESC'],
-        ap_c['F_STAR10'],
-        ap_c['F_ESC10'],
-        Mlim_Fstar,
-        Mlim_Fesc,
-        inputs.user_params.cdict['INTEGRATION_METHOD_ATOMIC'],
-    )
-
-    integral_fesc = lib.Nion_ConditionalM(
-        growth,
-        lnMmin,
-        lnMmax,
-        np.log(cell_mass.value),
-        sigma_cell,
-        delta,
-        Mturn_acg,
-        ap_c['ALPHA_STAR'],
-        ap_c['ALPHA_ESC'],
-        ap_c['F_STAR10'],
-        ap_c['F_ESC10'],
-        Mlim_Fstar,
-        Mlim_Fesc,
-        inputs.user_params.cdict['INTEGRATION_METHOD_ATOMIC'],
-    )
-    
-    if inputs.flag_options.USE_MINI_HALOS:
-        integral_stars_MINI = lib.Nion_ConditionalM_MINI(
-            growth,
-            lnMmin,
-            lnMmax,
-            np.log(cell_mass.value),
-            sigma_cell,
-            delta,
-            Mturn_mcg,
-            Mturn_acg,
-            ap_c['ALPHA_STAR_MINI'],
-            0.,
-            ap_c['F_STAR7_MINI'],
-            1.,
-            Mlim_Fstar,
-            0.,
-            inputs.user_params.cdict['INTEGRATION_METHOD_ATOMIC'],
-        )
-
-        integral_fesc_MINI = lib.Nion_ConditionalM_MINI(
-            growth,
-            lnMmin,
-            lnMmax,
-            np.log(cell_mass.value),
-            sigma_cell,
-            delta,
-            Mturn_mcg,
-            Mturn_acg,
-            ap_c['ALPHA_STAR_MINI'],
-            ap_c['ALPHA_ESC'],
-            ap_c['F_STAR7_MINI'],
-            ap_c['F_ESC7_MINI'],
-            Mlim_Fstar,
-            Mlim_Fesc,
-            inputs.user_params.cdict['INTEGRATION_METHOD_MINI'],
-        )
-        
-    integral_xray = lib.Xray_ConditionalM(
-        redshift,
-        growth,
-        lnMmin,
-        lnMmax,
-        np.log(cell_mass.value),
-        sigma_cell,
-        delta,
-        Mturn_mcg,
-        Mturn_acg,
-        ap_c['ALPHA_STAR'],
-        ap_c['ALPHA_STAR_MINI'],
-        ap_c['F_STAR10'],
-        ap_c['F_STAR7_MINI'],
-        Mlim_Fstar,
-        Mlim_Fstar_MINI,
-        ap_c['L_X'],
-        ap_c['L_X_MINI'],
-        t_h,
-        ap_c['t_STAR'],
-        inputs.user_params.cdict['INTEGRATION_METHOD_ATOMIC'],
+    integral_xray = cf.evaluate_Xray_cond(
+        inputs=inputs,
+        redshift=redshift,
+        densities=deltas,
+        radius=radius,
+        log10mturns=l10mturns_mcg, 
     )
 
     out = {
         'mass' : m_integral,
         'stars' : integral_stars,
-        'stars_mini' : integral_stars_MINI if inputs.flag_options.USE_MINI_HALOS else None,
+        'stars_mini' : integral_stars_MINI if inputs.flag_options.USE_MINI_HALOS else 0.0,
         'fesc' : integral_fesc,
-        'fesc_mini' : integral_fesc_MINI if inputs.flag_options.USE_MINI_HALOS else None,
+        'fesc_mini' : integral_fesc_MINI if inputs.flag_options.USE_MINI_HALOS else 0.0,
         'xray' : integral_xray,
     }
     return out
@@ -366,12 +189,9 @@ def get_cell_integrals(redshift,inputs,delta,lnMmin,lnMmax):
 #  Should be equivalent to calling backend (set_fixed_grids)
 #  on one cell w/o feedback
 def get_expected_lagrangian(redshift,inputs,delta,lnMmin,lnMmax):
-    lib.initialiseSigmaMInterpTable(inputs.user_params.SAMPLER_MIN_MASS, 1e16)
-
     ap_c = inputs.astro_params.cdict
     #setup cell values & constants
     t_h = (1 / inputs.cosmo_params.cosmo.H(redshift)).to('s').value
-    s_per_yr = 60 * 60 * 24 * 365.25
 
     rhocrit = inputs.cosmo_params.cosmo.critical_density(0).to('Msun Mpc-3').value
     prefactor_mass = rhocrit * inputs.cosmo_params.OMm
@@ -381,21 +201,21 @@ def get_expected_lagrangian(redshift,inputs,delta,lnMmin,lnMmax):
     prefactor_wsfr = prefactor_sfr * ap_c['F_ESC10']
     prefactor_xray = rhocrit * inputs.cosmo_params.OMm
 
-    #TODO: add minihalos
-    # prefactor_stars_mini = rhocrit * cosmo_params.OMb * astro_params.F_STAR7
-    # prefactor_sfr_mini = prefactor_stars_mini / astro_params.t_STAR / t_h
-    # prefactor_nion_mini = prefactor_stars_mini * astro_params.fesc_7 * ap_c['POP3_ION']
-    # prefactor_wsfr_mini = prefactor_sfr_mini * astro_params.fesc_7
-    # prefactor_xray_mini = prefactor_sfr_mini * astro_params.l_x_mini * s_per_yr
+    prefactor_stars_mini = rhocrit * inputs.cosmo_params.OMb * ap_c['F_STAR7_MINI']
+    prefactor_sfr_mini = prefactor_stars_mini / ap_c['t_STAR'] / t_h
+    prefactor_nion_mini = prefactor_stars_mini * ap_c['F_ESC7_MINI'] * ap_c['POP3_ION']
+    prefactor_wsfr_mini = prefactor_sfr_mini * ap_c['F_ESC7_MINI']
 
-    cint_dict = get_cell_integrals(redshift,inputs,delta,lnMmin,lnMmax)
+    cint_dict = get_cell_integrals(redshift,inputs,np.array([delta]),np.array([0]),np.array([0]))
 
     results = {
         'halo_mass': cint_dict['mass'] * prefactor_mass,
         'halo_stars' : cint_dict['stars'] * prefactor_stars,
+        'halo_stars_mini' : cint_dict['stars_mini'] * prefactor_stars_mini,
         'halo_sfr' : cint_dict['stars'] * prefactor_sfr,
-        'n_ion' : cint_dict['fesc'] * prefactor_nion,
-        'fescweighted_sfr' : cint_dict['fesc'] * prefactor_wsfr,
+        'halo_stars_mini' : cint_dict['stars_mini'] * prefactor_sfr_mini,
+        'n_ion' : cint_dict['fesc'] * prefactor_nion + cint_dict['fesc_mini'] * prefactor_nion_mini,
+        'fescweighted_sfr' : cint_dict['fesc'] * prefactor_wsfr + cint_dict['fesc_mini'] * prefactor_wsfr_mini,
         'halo_xray' : cint_dict['xray'] * prefactor_xray,
     }
 
@@ -425,16 +245,25 @@ def grid_halo_cat(halo_cat,inputs):
           / halo_cat.user_params.HII_DIM
     ) ** 3
     bins_crd = np.linspace(-0.5,lores+0.5,num=lores+1)
-    masses = getattr(halo_cat,'halo_masses')[0:halo_cat.n_halos+1]
-    crd = getattr(halo_cat,'halo_coords')[0:halo_cat.n_halos+1]
-    crd = crd.reshape(masses.size,3)
+    masses = halo_cat.get('halo_masses')[0:halo_cat.n_halos+1]
+    crd = halo_cat.get('halo_coords')[0:halo_cat.n_halos+1,:]
     crd = crd / hires * lores
 
-    props =  get_props_from_halofield(halo_cat,inputs,kinds=['nion','xray'])
-    logger.info(f'crd {crd.shape} n {props["nion"].shape}')
+    #NOTE: no minihalos here or feedback
+    props = cf.convert_halo_properties(
+        redshift=halo_cat.redshift,
+        inputs=inputs,
+        halo_masses=halo_cat.get('halo_masses')[0:halo_cat.n_halos+1],
+        halo_coords=halo_cat.get('halo_coords')[0:halo_cat.n_halos+1],
+        star_rng=halo_cat.get('star_rng')[0:halo_cat.n_halos+1],
+        sfr_rng=halo_cat.get('sfr_rng')[0:halo_cat.n_halos+1],
+        xray_rng=halo_cat.get('xray_rng')[0:halo_cat.n_halos+1],
+    )
+
+    logger.info(f'crd {crd.shape} n {props["n_ion"].shape}')
     mass_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=masses)
-    nion_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=props['nion'])
-    xray_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=props['xray'])
+    nion_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=props['n_ion'])
+    xray_grid,_ = np.histogramdd(crd,bins=[bins_crd,]*3,weights=props['halo_xray'])
     mass_grid = mass_grid * U.M_sun / cell_volume
     nion_grid = nion_grid / cell_volume
     xray_grid = xray_grid  * U.erg / U.s / cell_volume * 1e38
@@ -641,10 +470,7 @@ def get_lc_powerspectra(lc_list,z_list,kind='brightness_temp',kind2=None,subtrac
     power_arr = np.zeros((len(lc_list),n_z,n_psbins))
     z_ps = np.zeros((len(lc_list),n_z))
     for i,lcf in enumerate(lc_list):
-        if isinstance(lcf,p21c.LightCone):
-            lc = lcf
-        else:
-            lc = p21c.LightCone.from_file(lcf,safe=False)
+        lc = read_lightcone(lcf,{kind,kind2},{kind,kind2})
 
         z_targets = np.zeros_like(z_list)
         dtb_global = lc.global_quantities['brightness_temp']
@@ -734,6 +560,7 @@ def global_integrals(inputs,fields,ave_mturns,ave_mturns_mini,lnMmin,lnMmax):
     need_star_mcg = any(field in ("halo_xray","halo_stars_mini","halo_sfr_mini") for field in fields)
     need_fcoll = any(field in ("halo_mass") for field in fields)
     need_xray = "halo_xray" in fields and fo.USE_HALO_FIELD
+    acg_thresh = np.vectorize(lib.atomic_cooling_threshold)(redshifts)
 
     if need_fesc_acg:
         fesc_acg_integral = np.vectorize(lib.Nion_General)(
@@ -744,7 +571,7 @@ def global_integrals(inputs,fields,ave_mturns,ave_mturns_mini,lnMmin,lnMmax):
     if need_fesc_mcg:
         fesc_mcg_integral = np.vectorize(lib.Nion_General_MINI)(
             redshifts,lnMmin,lnMmax,
-            ave_mturns_mini,ave_mturns,ap_c["ALPHA_STAR_MINI"],ap_c["ALPHA_ESC"],
+            ave_mturns_mini,acg_thresh,ap_c["ALPHA_STAR_MINI"],ap_c["ALPHA_ESC"],
             ap_c["F_STAR7_MINI"],ap_c["F_ESC7_MINI"],
             Mlim_Fstar_MINI,Mlim_Fesc_MINI
         )
@@ -757,7 +584,7 @@ def global_integrals(inputs,fields,ave_mturns,ave_mturns_mini,lnMmin,lnMmax):
     if need_star_mcg:
         star_mcg_integral = np.vectorize(lib.Nion_General_MINI)(
             redshifts,lnMmin,lnMmax,
-            ave_mturns_mini,ave_mturns,ap_c["ALPHA_STAR_MINI"],0.,
+            ave_mturns_mini,acg_thresh,ap_c["ALPHA_STAR_MINI"],0.,
             ap_c["F_STAR7_MINI"],0.,
             Mlim_Fstar_MINI,0.
         )
@@ -822,9 +649,15 @@ def match_global_function(fields,lc,lnMmin,lnMmax):
     uses the lightcone object to get the necessary parameters
     """
 
-    inputs = lc.inputs
-    
-    ave_mturns = 10**lc.global_quantities['log10_mturn_acg']
-    ave_mturns_mini = 10**lc.global_quantities['log10_mturn_mcg']
+    inputs = p21c.InputParameters(
+        user_params=lc.user_params,
+        cosmo_params=lc.cosmo_params,
+        astro_params=lc.astro_params,
+        flag_options=lc.flag_options,
+        random_seed=lc.random_seed,
+        node_redshifts=lc.node_redshifts,
+    )
+    ave_mturns = 10**lc.log10_mturnovers
+    ave_mturns_mini = 10**lc.log10_mturnovers_mini
     
     return global_integrals(inputs,fields,ave_mturns,ave_mturns_mini,lnMmin,lnMmax)
