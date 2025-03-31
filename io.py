@@ -1,6 +1,5 @@
 import numpy as np
 import py21cmfast as p21c
-from .analysis_funcs import get_binned_stats
 import h5py
 import pandas as pd
 from astropy import units as U
@@ -92,36 +91,11 @@ def read_astrid(cosmo,fname,z):
 
 def parse_lc_list(lc_list):
     lightcones = []
-    for lc in lc_list:
-        if isinstance(lc,str): 
-            lc = p21c.LightCone.read(lc,safe=False)
-        if not isinstance(lc,p21c.LightCone):
-            raise ValueError("lc list must be either py21cmfast.LightCone or string")
+    for lcf in lc_list:
+        lc = read_lightcone(lcf)
         lightcones.append(lc)
 
     return lightcones
-
-
-
-##COMPATIBILITY WITH OLD (BEFORE LIGHTCONER) OUTPUTS
-##BE CAREFUL, ALLOWS INCOMPATIBLE OBJECTS TO BE LOADED
-def read_lc_ignoreparams(lcf):
-    try:
-        lightcone = p21c.LightCone.read(lcf)
-    except:
-        try:
-            park, glbls = p21c.LightCone._read_inputs(lcf)
-            boxk = p21c.LightCone._read_particular(lcf)
-            #this sets globals to defaults, not consistent with the lightcone but allows us to load different versions
-            lightcone = p21c.LightCone(**park, **boxk)
-            logger.warning(f"lightcone {lcf} is likely from a different version and will have the wrong global parameters")
-        except:
-            logger.error(f"could not read lightcone {lcf}")
-            raise FileExistsError
-        
-    if not hasattr(lightcone.lightcone_distances,"unit"):
-        lightcone.lightcone_distances <<= U.Mpc
-    return lightcone
 
 def read_cv_ignoreparams(fname):
     try:
@@ -172,3 +146,87 @@ def add_mturn_to_lc(lcf):
             pass
         logger.info(f"set lc mturn to zero")
     return
+
+def inputs_from_database(filename):
+    with h5py.File(filename) as hdf:
+        inputs = p21c.InputParameters(
+            node_redshifts=hdf['coeval_data'].attrs['node_redshifts'],
+            user_params=dict(hdf['simulation_parameters']['user_params'].attrs),
+            cosmo_params=dict(hdf['simulation_parameters']['cosmo_params'].attrs),
+            astro_params=dict(hdf['simulation_parameters']['astro_params'].attrs),
+            flag_options=dict(hdf['simulation_parameters']['flag_options'].attrs),
+            random_seed=hdf.attrs['random_seed'],
+        )
+    return inputs
+
+    
+def lc_from_database(filename,quantities,global_quantities):
+    name_map = {
+        'density': 'density',
+        'n_ion': 'ion_emissivity',
+        'halo_mass' : 'M_halo',
+        'halo_stars' : 'M_star',
+        'halo_stars_mini' : 'M_star_mini',
+        'halo_sfr' : 'SFR',
+        'halo_sfr_mini' : 'SFR_mini',
+        'xH_box': 'x_HI',
+        'halo_xray': 'xray_emissivity',
+        'brightness_temp': 'brightness_temp',
+        'velocity_z': 'velocity_z',
+    }
+    inputs = inputs_from_database(filename)
+    with h5py.File(filename) as hdf:
+        inputs = p21c.InputParameters(
+            node_redshifts=hdf['coeval_data'].attrs['node_redshifts'],
+            user_params=dict(hdf['simulation_parameters']['user_params'].attrs),
+            cosmo_params=dict(hdf['simulation_parameters']['cosmo_params'].attrs),
+            astro_params=dict(hdf['simulation_parameters']['astro_params'].attrs),
+            flag_options=dict(hdf['simulation_parameters']['flag_options'].attrs),
+            random_seed=hdf.attrs['random_seed'],
+        )
+        lcn = p21c.RectilinearLightconer.with_equal_cdist_slices(
+            min_redshift=inputs.node_redshifts[-1],
+            max_redshift=inputs.node_redshifts[0],
+            resolution=inputs.user_params.cell_size,
+            cosmo=inputs.cosmo_params.cosmo,
+            quantities=quantities,
+        )
+
+        lc = {
+            quantity: hdf['lightcones'][name_map[quantity]][:]
+            for quantity in quantities if quantity is not None
+        }
+        glbls = {
+            quantity: hdf['coeval_data'][name_map[quantity]][:]
+            for quantity in global_quantities if quantity is not None
+        }
+
+        lightcone = p21c.LightCone(
+            lcn.lc_distances,
+            inputs,
+            lc,
+            log10_mturnovers=hdf['coeval_data']['log10_mturnovers'],
+            log10_mturnovers_mini=hdf['coeval_data']['log10_mturnovers_mini'],
+            global_quantities=glbls,
+        )
+
+    return lightcone
+    
+def read_lightcone(fname,q=(None,),g_q=(None,),safe=False):
+    if isinstance(fname,p21c.LightCone):
+        lc = fname
+    else:
+        try:
+            lc = p21c.LightCone.from_file(fname,safe=safe)
+        except Exception as e:
+            print(f"ERROR IN FROM_FILE {e}",flush=True)
+            try:
+                lc = p21c.LightCone.read(fname,safe=safe) #compatibility
+            except Exception as e:
+                print(f"ERROR IN READ {e}",flush=True)
+                try:
+                    lc = lc_from_database(fname,q,g_q)
+                except Exception as e:
+                    raise e
+    
+    return lc
